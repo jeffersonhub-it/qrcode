@@ -812,7 +812,17 @@
   }
 
   // ---------- storage (cards are always stored encrypted with the session key) ----------
-  async function persist(){
+  // persist() calls are queued/serialized: if a save is already in flight
+  // when another add/remove happens, the new call waits its turn instead of
+  // racing the first one. Without this, two overlapping saves could finish
+  // out of order and the smaller (older) one could overwrite the newer one
+  // — the "added several cards, only one was left after logging back in" bug.
+  let persistChain = Promise.resolve();
+  function persist(){
+    persistChain = persistChain.then(doPersist, doPersist); // run next even if prior save failed
+    return persistChain;
+  }
+  async function doPersist(){
     if (!sessionKey || !authRecord) return;
     try{
       const payload = await encryptJSON(sessionKey, cards);
@@ -998,8 +1008,9 @@
     reader.readAsDataURL(file);
   });
 
-  $('lockBtn').addEventListener('click', () => {
+  $('lockBtn').addEventListener('click', async () => {
     closeAccountMenu();
+    try{ await persistChain; }catch(e){} // let any in-flight save finish first
     sessionKey = null;
     authRecord = null;
     cards = [];
@@ -1294,10 +1305,15 @@
       qrData: pendingQr.data
     };
     cards.unshift(card);
-    await persist();
-    closeAdd();
-    render();
-    toast('Card saved');
+    $('saveBtn').disabled = true;
+    try{
+      await persist();
+      closeAdd();
+      render();
+      toast('Card saved');
+    } finally {
+      $('saveBtn').disabled = false;
+    }
   });
 
   switchAuthTab('login');
