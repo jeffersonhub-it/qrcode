@@ -402,6 +402,33 @@
   }
   .vault-icon{ width:34px; height:34px; margin-bottom:14px; }
 
+  .install-btn{
+    display: none; /* shown via JS only when installable/relevant */
+    align-items:center; justify-content:center; gap:8px;
+    width:100%; margin: 14px 0 4px;
+    background: var(--paper); border: 1.5px solid var(--brass);
+    color:#21231D; font-family:'Inter',sans-serif; font-weight:600; font-size:14px;
+    padding: 11px 14px; border-radius: 14px; cursor:pointer;
+  }
+  .install-btn svg{ width:17px; height:17px; flex:none; }
+  .install-btn.show{ display:flex; }
+
+  .ios-steps{ margin: 4px 0 0; padding:0; list-style:none; }
+  .ios-steps li{
+    display:flex; align-items:flex-start; gap:12px;
+    font-size:14px; color:#3A3626; padding: 10px 0;
+    border-top:1px solid #E8E1CD;
+  }
+  .ios-steps li:first-child{ border-top:none; }
+  .ios-steps .step-num{
+    flex:none; width:24px; height:24px; border-radius:50%;
+    background: var(--brass); color:#21231D; font-weight:700; font-size:12.5px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ios-steps .share-glyph{
+    display:inline-flex; vertical-align:-4px; width:16px; height:16px;
+  }
+
   .toast{
     position: fixed; left:50%; bottom: 26px; transform: translateX(-50%) translateY(20px);
     background:#21231D; color:#F4EFE3; padding: 11px 18px; border-radius: 30px; font-size:13px;
@@ -420,6 +447,11 @@
       <button class="authtabbtn active" data-authtab="login" type="button">Log in</button>
       <button class="authtabbtn" data-authtab="register" type="button">Register</button>
     </div>
+
+    <button class="install-btn" id="installBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#9C7A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>
+      Install app
+    </button>
 
     <div id="loginFields">
       <h1>Welcome back</h1>
@@ -462,6 +494,7 @@
       <button class="menu-item" id="fabAdd" type="button">Add card</button>
       <button class="menu-item" id="changePhotoBtn" type="button">Change photo</button>
       <input type="file" id="avatarFile" accept="image/*" style="display:none;">
+      <button class="menu-item" id="installBtnMenu" type="button" style="display:none;">Install app</button>
       <div class="menu-divider"></div>
       <button class="logout-btn" id="lockBtn">Log out</button>
     </div>
@@ -478,6 +511,27 @@
   </div>
 
   <p class="section-label" id="countLabel" style="display:none;"></p>
+</div>
+
+<!-- iOS "Add to Home Screen" instructions sheet -->
+<div class="overlay" id="iosInstallOverlay">
+  <div class="sheet">
+    <div class="grabber"></div>
+    <h2>Install QR Wallet</h2>
+    <p class="sub">iOS doesn't let apps install themselves — just follow these steps in Safari:</p>
+    <ol class="ios-steps">
+      <li>
+        <span class="step-num">1</span>
+        <span>Tap the <strong>Share</strong> button
+          <svg class="share-glyph" viewBox="0 0 24 24" fill="none" stroke="#9C7A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>
+          in Safari's toolbar.</span>
+      </li>
+      <li><span class="step-num">2</span><span>Scroll down and tap <strong>Add to Home Screen</strong>.</span></li>
+      <li><span class="step-num">3</span><span>Tap <strong>Add</strong> in the top-right corner.</span></li>
+    </ol>
+    <p class="sub" style="margin-top:16px;">The QR Wallet icon will appear on your home screen, opening full-screen with no browser bar.</p>
+    <button class="menu-item" id="iosInstallClose" type="button" style="width:100%; text-align:center; margin-top:8px; border:1px solid #D8D0BB;">Got it</button>
+  </div>
 </div>
 
 <!-- Add card sheet -->
@@ -598,6 +652,64 @@
     t.classList.add('show');
     setTimeout(()=> t.classList.remove('show'), 1800);
   }
+
+  // ---------- Install app (Add to Home Screen) ----------
+  (function setupInstall(){
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true; // iOS Safari flag
+    if (isStandalone) return; // already installed — leave both buttons hidden
+
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS 13+
+    const isSafari = isIOS && /safari/i.test(navigator.userAgent) && !/crios|fxios|edgios/i.test(navigator.userAgent);
+
+    const lockBtnEl = $('installBtn');
+    const menuBtnEl = $('installBtnMenu');
+    let deferredPrompt = null;
+
+    function showButtons(){
+      lockBtnEl.classList.add('show');
+      menuBtnEl.style.display = 'block';
+    }
+    function hideButtons(){
+      lockBtnEl.classList.remove('show');
+      menuBtnEl.style.display = 'none';
+    }
+
+    if (isIOS){
+      // No programmatic install on iOS — show the button (Safari only, since
+      // Chrome/Firefox on iOS can't install to home screen at all) and walk
+      // the user through Share -> Add to Home Screen ourselves.
+      if (isSafari) showButtons();
+      const openIosSheet = () => $('iosInstallOverlay').classList.add('open');
+      lockBtnEl.addEventListener('click', openIosSheet);
+      menuBtnEl.addEventListener('click', openIosSheet);
+      $('iosInstallClose').addEventListener('click', () => $('iosInstallOverlay').classList.remove('open'));
+      $('iosInstallOverlay').addEventListener('click', (e) => {
+        if (e.target === $('iosInstallOverlay')) $('iosInstallOverlay').classList.remove('open');
+      });
+    } else {
+      // Android/Chrome/Edge: use the native install prompt when the browser
+      // offers one. Hidden until the browser signals it's actually installable.
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        showButtons();
+      });
+      async function triggerInstall(){
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        hideButtons();
+        if (outcome === 'accepted') toast('App installed');
+      }
+      lockBtnEl.addEventListener('click', triggerInstall);
+      menuBtnEl.addEventListener('click', triggerInstall);
+      window.addEventListener('appinstalled', hideButtons);
+    }
+  })();
 
   // ---------- crypto helpers ----------
   function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
