@@ -4,6 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>QR Wallet</title>
+
+<!-- Add to Home Screen / PWA setup -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0F2C25">
+<!-- iOS: makes "Add to Home Screen" use this icon and open without Safari's
+     browser chrome (address bar/tab bar), like a real installed app. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QR Wallet">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Android/Chrome equivalent -->
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>

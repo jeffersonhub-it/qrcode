@@ -83,12 +83,35 @@ project.
 
 Any time you `git push` to `main`, Vercel automatically redeploys.
 
+## Installing it like an app (Add to Home Screen)
+
+Once it's deployed on Vercel (a `https://` link — this doesn't work on a
+`localhost` or Claude-preview link), you can "install" it on iOS so it
+behaves like a real app: its own icon, no Safari address bar, opens
+full-screen.
+
+1. Open the deployed link in **Safari** on iPhone/iPad (must be Safari,
+   not Chrome — iOS only supports this from Safari).
+2. Tap the **Share** button (square with an arrow pointing up).
+3. Scroll down and tap **Add to Home Screen**.
+4. Confirm the name ("QR Wallet") and tap **Add**.
+
+It'll appear on the home screen with the vault icon and open in its own
+window, separate from the browser. This is a "PWA" (progressive web app)
+— there's no App Store listing or install, just this browser-native
+shortcut, but it looks and behaves like a normal installed app.
+
 ## Files
 
 - `index.html` — the entire app (markup, styles, and logic).
 - `firebase-config.js` — your Firebase project keys go here (kept as a
   separate file so it's easy to find and edit without touching the app
   logic).
+- `manifest.json` — tells iOS/Android the app's name, colors, and icons
+  for "Add to Home Screen".
+- `icon.svg` / `apple-touch-icon.png` / `icon-192.png` / `icon-512.png` —
+  the app's logo, at the sizes iOS and Android expect. Edit `icon.svg`
+  and re-render the PNGs if you want to change the design.
 - `README.md` — this file.
 
 ## A note on security
