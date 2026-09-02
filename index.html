@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>QR Wallet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- Firebase (optional — see firebase-config.js). Without these, the app
+     still runs, using Claude's file preview storage or a session-only store. -->
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  :root{
+    --vault-bg-1: #0F2C25;
+    --vault-bg-2: #0A211B;
+    --paper: #F4EFE3;
+    --brass: #CBA135;
+    --brass-soft: #E4C878;
+    --ink: #E9E4D4;
+    --ink-dim: #A9B3AC;
+    --danger: #C1543E;
+    --radius-card: 20px;
+    --radius-sheet: 22px;
+    font-size: 16px;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    font-family:'Inter', sans-serif;
+    background:
+      radial-gradient(circle at 20% -10%, #163B31 0%, transparent 55%),
+      linear-gradient(180deg, var(--vault-bg-1), var(--vault-bg-2));
+    color: var(--ink);
+    min-height:100vh;
+    overflow-x:hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .app{
+    max-width: 480px;
+    margin: 0 auto;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    padding: calc(28px + env(safe-area-inset-top)) 0 100px;
+    position:relative;
+  }
+
+  /* header — minimal account row with a dropdown for log out */
+  header{
+    padding: 0 24px 20px;
+    display:flex; align-items:center;
+    position: relative;
+  }
+  .account{
+    display:flex; align-items:center; gap:10px; min-width:0;
+    background:none; border:none; cursor:pointer; padding: 4px 6px 4px 4px;
+    border-radius: 24px;
+  }
+  .avatar{
+    flex:none;
+    width: 38px; height:38px;
+    border-radius:50%;
+    background: linear-gradient(135deg, var(--brass-soft), var(--brass));
+    color:#2A2110;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Fraunces', serif; font-weight:600; font-size:15px;
+    overflow:hidden;
+  }
+  .avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .account-name{
+    font-family:'Inter', sans-serif;
+    font-weight:600;
+    font-size: 15.5px;
+    color: var(--paper);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    max-width: 46vw;
+  }
+  .account-chevron{ flex:none; width:14px; height:14px; opacity:0.6; transition: transform .18s ease; }
+  .account.open .account-chevron{ transform: rotate(180deg); }
+
+  .account-menu{
+    position:absolute; top: calc(100% + 2px); left: 24px;
+    background: var(--paper);
+    border-radius: 14px;
+    padding: 6px;
+    min-width: 170px;
+    box-shadow: 0 16px 32px -12px rgba(0,0,0,0.5);
+    opacity:0; transform: translateY(-6px) scale(0.98);
+    pointer-events:none; transform-origin: top left;
+    transition: opacity .16s ease, transform .16s ease;
+    z-index: 30;
+  }
+  .account-menu.open{ opacity:1; transform: translateY(0) scale(1); pointer-events:auto; }
+  .menu-item{
+    display:block; width:100%; text-align:left;
+    background:none; border:none; cursor:pointer;
+    font-family:'Inter', sans-serif;
+    font-size: 14px; font-weight:600;
+    color:#21231D;
+    padding: 10px 12px;
+    border-radius: 9px;
+  }
+  .menu-item:hover{ background: rgba(0,0,0,0.05); }
+  .menu-divider{ height:1px; background:#E2DAC4; margin: 4px 6px; }
+  .logout-btn{
+    display:block; width:100%; text-align:left;
+    background:none; border:none; cursor:pointer;
+    font-family:'Inter', sans-serif;
+    font-size: 14px; font-weight:600;
+    color:#B23A28;
+    padding: 10px 12px;
+    border-radius: 9px;
+  }
+  .logout-btn:hover{ background: rgba(178,58,40,0.08); }
+
+
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--brass-soft);
+    margin: 0 0 6px;
+  }
+  h1{
+    font-family:'Fraunces', serif;
+    font-weight: 500;
+    font-size: 30px;
+    line-height:1.15;
+    margin: 0 0 6px;
+    color: var(--paper);
+  }
+
+  /* empty state */
+  .empty{
+    margin: 40px 24px 0;
+    border: 1px dashed rgba(203,161,53,0.4);
+    border-radius: var(--radius-card);
+    padding: 36px 22px;
+    text-align:center;
+  }
+  .empty .icon{
+    width:44px; height:44px; margin:0 auto 14px;
+    opacity:0.8;
+  }
+  .empty h2{
+    font-family:'Fraunces', serif;
+    font-weight:500;
+    font-size:19px;
+    margin: 0 0 8px;
+    color: var(--paper);
+  }
+  .empty p{ margin:0; font-size:13.5px; color:var(--ink-dim); line-height:1.5; }
+
+  /* card stack — overlapping deck, tap to bring to front */
+  .stack-wrap{ margin-top: 14px; padding: 0 24px; }
+  .stack{
+    position: relative;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .card{
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 202px;
+    border-radius: var(--radius-card);
+    padding: 20px 22px;
+    display:flex;
+    flex-direction:column;
+    justify-content: space-between;
+    color: #fff;
+    cursor:pointer;
+    box-shadow: 0 18px 30px -14px rgba(0,0,0,0.55);
+    overflow:hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: top .34s cubic-bezier(.22,.61,.36,1), transform .18s ease, box-shadow .3s ease;
+  }
+  .card.is-front{ box-shadow: 0 22px 38px -14px rgba(0,0,0,0.6); }
+  .card:active{ transform: scale(0.98); }
+  .card::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background: radial-gradient(120% 90% at 100% 0%, rgba(255,255,255,0.16), transparent 55%);
+    pointer-events:none;
+  }
+  .card-top{ display:flex; align-items:flex-start; justify-content:space-between; }
+  .card-name{
+    font-family:'Fraunces', serif;
+    font-weight:500;
+    font-size: 18px;
+    letter-spacing: 0.01em;
+    max-width: 70%;
+  }
+  .chip{ width: 34px; height:26px; border-radius:5px;
+    background: linear-gradient(135deg, #E8D08A, #B4924A);
+    position:relative;
+  }
+  .chip::before{
+    content:"";
+    position:absolute; inset:4px;
+    border: 1px solid rgba(0,0,0,0.25);
+    border-radius:3px;
+  }
+  .card-mid{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 16.5px;
+    letter-spacing: 0.14em;
+    color: rgba(255,255,255,0.88);
+  }
+  .card-bottom{ display:flex; align-items:flex-end; justify-content:space-between; }
+  .card-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.65);
+    text-transform: uppercase;
+  }
+  .wave{ width:20px; height:20px; opacity:0.9; }
+  .qr-tag{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    background: rgba(255,255,255,0.16);
+    padding: 4px 8px;
+    border-radius: 20px;
+    backdrop-filter: blur(2px);
+  }
+
+  /* section label */
+  .section-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    margin: 28px 24px 12px;
+    text-align:center;
+  }
+
+  /* overlay base */
+  .overlay{
+    position: fixed; inset:0;
+    background: rgba(6,14,11,0.72);
+    backdrop-filter: blur(6px);
+    display:flex; align-items:flex-end;
+    z-index: 50;
+    opacity:0; pointer-events:none;
+    transition: opacity .22s ease;
+  }
+  .overlay.open{ opacity:1; pointer-events:auto; }
+
+  /* sheet (add card) */
+  .sheet{
+    background: var(--paper);
+    color: #21231D;
+    width:100%;
+    max-width:480px;
+    margin: 0 auto;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    padding: 14px 22px calc(26px + env(safe-area-inset-bottom));
+    transform: translateY(100%);
+    transition: transform .28s cubic-bezier(.32,.72,0,1);
+    max-height: 88vh;
+    overflow-y:auto;
+  }
+  .overlay.open .sheet{ transform: translateY(0); }
+  .grabber{ width:38px; height:4px; background:#D8D0BB; border-radius:2px; margin: 6px auto 16px; }
+  .sheet h2{
+    font-family:'Fraunces', serif; font-weight:500; font-size:21px; margin: 0 0 4px;
+  }
+  .sheet .sub{ font-size:13px; color:#6B6455; margin:0 0 20px; }
+
+  label{ display:block; font-size:12.5px; font-weight:600; color:#4A4536; margin: 16px 0 7px; }
+  label:first-of-type{ margin-top:0; }
+  input[type=text], input[type=password], select{
+    width:100%; padding: 12px 13px; border-radius: 12px;
+    border: 1px solid #D8D0BB; background:#fff; font-size:15px; font-family:'Inter',sans-serif; color:#21231D;
+  }
+  input[type=text]:focus, input[type=password]:focus, select:focus{ outline:2px solid var(--brass); outline-offset:1px; }
+
+  .swatches{ display:flex; gap:10px; flex-wrap:wrap; margin-top:2px; }
+  .swatch{
+    width:38px; height:38px; border-radius:50%; cursor:pointer;
+    border: 2px solid transparent;
+    position:relative;
+  }
+  .swatch.selected{ border-color:#21231D; }
+  .swatch.selected::after{
+    content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:15px; text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+
+  .tabbar{ display:flex; gap:6px; background:#EAE3D1; padding:4px; border-radius:12px; margin-top:4px; }
+  .tabbtn{
+    flex:1; border:none; background:transparent; padding:9px 0; font-size:13px; font-weight:600;
+    border-radius:9px; cursor:pointer; color:#6B6455; font-family:'Inter',sans-serif;
+  }
+  .tabbtn.active{ background:#fff; color:#21231D; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .authtabbtn{
+    flex:1; border:none; background:transparent; padding:9px 0; font-size:13px; font-weight:600;
+    border-radius:9px; cursor:pointer; color:#6B6455; font-family:'Inter',sans-serif;
+  }
+  .authtabbtn.active{ background:#fff; color:#21231D; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .tabpane{ display:none; margin-top:14px; }
+  .tabpane.active{ display:block; }
+
+  .filebtn{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    border: 1.5px dashed #C9BFA0; border-radius:14px; padding: 22px 12px;
+    font-size: 13.5px; color:#6B6455; cursor:pointer; text-align:center;
+  }
+  .filebtn input{ display:none; }
+  .preview-wrap{ display:flex; justify-content:center; margin-top:14px; }
+  .preview-wrap img, .preview-wrap canvas{
+    width: 140px; height:140px; border-radius:12px; background:#fff; padding:8px;
+    border:1px solid #E2DAC4;
+  }
+
+  .primary-btn{
+    width:100%; margin-top:22px; padding: 14px; border:none; border-radius:14px;
+    background: #21231D; color: var(--paper); font-size:15px; font-weight:600; cursor:pointer;
+    font-family:'Inter', sans-serif;
+  }
+  .primary-btn:disabled{ opacity:0.4; }
+  .cancel-link{
+    display:block; text-align:center; margin-top:12px; font-size:13px; color:#8A8267;
+    background:none; border:none; cursor:pointer; width:100%; padding:6px;
+  }
+
+  /* QR view overlay */
+  .qr-overlay{
+    position: fixed; inset:0; background: #0A211B;
+    z-index:60; display:flex; flex-direction:column;
+    opacity:0; pointer-events:none; transition: opacity .22s ease;
+  }
+  .qr-overlay.open{ opacity:1; pointer-events:auto; }
+  .qr-top{ display:flex; justify-content:space-between; align-items:center; padding: calc(20px + env(safe-area-inset-top)) 22px 8px; }
+  .icon-btn{ background:rgba(255,255,255,0.08); border:none; width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .icon-btn svg{ width:18px; height:18px; }
+  .qr-body{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 0 30px; text-align:center; }
+  .qr-bankname{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--paper); margin: 0 0 4px; }
+  .qr-hint{ font-size:13px; color: var(--ink-dim); margin: 0 0 26px; }
+  .qr-frame{
+    background:#fff; border-radius:20px; padding:20px;
+    box-shadow: 0 20px 40px -16px rgba(0,0,0,0.6);
+  }
+  .qr-frame img, .qr-frame canvas{ display:block; width: 62vw; max-width: 260px; height:auto; }
+  .qr-bottom{ padding: 20px 30px calc(26px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:10px; }
+  .download-btn{
+    width:100%; padding:14px; border-radius:14px; border:none;
+    background: var(--brass); color:#21231D; font-size:14.5px; font-weight:700; cursor:pointer;
+    font-family:'Inter',sans-serif;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .download-btn svg{ width:17px; height:17px; }
+  .delete-btn{
+    width:100%; padding:13px; border-radius:14px; border:1px solid rgba(193,84,62,0.5);
+    background:transparent; color:#E08672; font-size:14px; font-weight:600; cursor:pointer;
+    font-family:'Inter',sans-serif;
+  }
+
+  /* auth gate — setup / login screen shown before the wallet unlocks */
+  .auth-screen{
+    position: fixed; inset:0; z-index: 100;
+    display:flex; align-items:center; justify-content:center;
+    padding: 24px calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+    background:
+      radial-gradient(circle at 20% -10%, #163B31 0%, transparent 55%),
+      linear-gradient(180deg, var(--vault-bg-1), var(--vault-bg-2));
+  }
+  .auth-card{
+    width:100%; max-width: 380px;
+    background: var(--paper);
+    color:#21231D;
+    border-radius: var(--radius-sheet);
+    padding: 30px 26px calc(30px + env(safe-area-inset-bottom));
+    box-shadow: 0 24px 50px -18px rgba(0,0,0,0.6);
+  }
+  .auth-card .eyebrow{ color:#9C7A1E; }
+  .auth-card h1{ color:#21231D; font-size:24px; margin-bottom:8px; }
+  .auth-sub{ font-size:13.5px; color:#6B6455; margin: 0 0 22px; line-height:1.5; }
+  .auth-error{
+    font-size:13px; color:#B23A28; background: rgba(178,58,40,0.08);
+    border-radius:10px; padding:9px 12px; margin: 14px 0 0;
+  }
+  .vault-icon{ width:34px; height:34px; margin-bottom:14px; }
+
+  .toast{
+    position: fixed; left:50%; bottom: 26px; transform: translateX(-50%) translateY(20px);
+    background:#21231D; color:#F4EFE3; padding: 11px 18px; border-radius: 30px; font-size:13px;
+    opacity:0; pointer-events:none; transition: all .25s ease; z-index:80;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="auth-screen" id="authScreen">
+  <div class="auth-card">
+    <svg class="vault-icon" viewBox="0 0 24 24" fill="none" stroke="#CBA135" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M21 12h-3M6 12H3"/></svg>
+    <p class="eyebrow">VAULT LOCK</p>
+
+    <div class="tabbar">
+      <button class="authtabbtn active" data-authtab="login" type="button">Log in</button>
+      <button class="authtabbtn" data-authtab="register" type="button">Register</button>
+    </div>
+
+    <div id="loginFields">
+      <h1>Welcome back</h1>
+      <p class="auth-sub">Enter your username and password to unlock your wallet.</p>
+      <label for="loginUser">Username</label>
+      <input type="text" id="loginUser" autocomplete="username">
+      <label for="loginPass">Password</label>
+      <input type="password" id="loginPass" autocomplete="current-password">
+      <button class="primary-btn" id="loginBtn">Unlock</button>
+      <p class="auth-error" id="loginError" style="display:none;"></p>
+      <button class="cancel-link" id="forgotBtn" type="button">Forgot password? Delete this wallet</button>
+    </div>
+
+    <div id="setupFields" style="display:none;">
+      <h1>Register a wallet</h1>
+      <p class="auth-sub">Create a username, password, and enter the passkey so only people who have it can register a new wallet.</p>
+      <label for="setupUser">Username</label>
+      <input type="text" id="setupUser" autocomplete="username" placeholder="e.g. juandelacruz">
+      <label for="setupPass">Password</label>
+      <input type="password" id="setupPass" autocomplete="new-password" placeholder="At least 4 characters">
+      <label for="setupPass2">Confirm password</label>
+      <input type="password" id="setupPass2" autocomplete="new-password">
+      <label for="setupPasskey">Passkey</label>
+      <input type="password" id="setupPasskey" inputmode="numeric" autocomplete="off" placeholder="Ask the wallet owner for this">
+      <button class="primary-btn" id="setupBtn">Create wallet</button>
+      <p class="auth-error" id="setupError" style="display:none;"></p>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+
+  <header>
+    <button class="account" id="accountToggle" aria-haspopup="true" aria-expanded="false">
+      <div class="avatar" id="avatarInitial">•</div>
+      <span class="account-name" id="accountName"></span>
+      <svg class="account-chevron" viewBox="0 0 24 24" fill="none" stroke="#A9B3AC" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="account-menu" id="accountMenu">
+      <button class="menu-item" id="fabAdd" type="button">Add card</button>
+      <button class="menu-item" id="changePhotoBtn" type="button">Change photo</button>
+      <input type="file" id="avatarFile" accept="image/*" style="display:none;">
+      <div class="menu-divider"></div>
+      <button class="logout-btn" id="lockBtn">Log out</button>
+    </div>
+  </header>
+
+  <div id="emptyState" class="empty" style="display:none;">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#CBA135" stroke-width="1.4"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM19 14v3M14 19h3M19 19h.01"/></svg>
+    <h2>No cards yet</h2>
+    <p>Add your first bank or e-wallet and paste in the QR code you use to get paid.</p>
+  </div>
+
+  <div class="stack-wrap" id="stackWrap" style="display:none;">
+    <div class="stack" id="stack"></div>
+  </div>
+
+  <p class="section-label" id="countLabel" style="display:none;"></p>
+</div>
+
+<!-- Add card sheet -->
+<div class="overlay" id="addOverlay">
+  <div class="sheet">
+    <div class="grabber"></div>
+    <h2>Add a card</h2>
+    <p class="sub">Choose who it's for, then attach the QR you use to receive payments.</p>
+
+    <label for="bankSelect">Bank or e-wallet</label>
+    <select id="bankSelect">
+      <option value="">Select…</option>
+      <option>BDO</option>
+      <option>BPI</option>
+      <option>UnionBank</option>
+      <option>Metrobank</option>
+      <option>Maribank</option>
+      <option>GoTyme</option>
+      <option>GCash</option>
+      <option>Maya</option>
+      <option value="__custom">Other / custom name…</option>
+    </select>
+    <input type="text" id="customName" placeholder="Card name, e.g. Household savings" style="display:none; margin-top:8px;">
+
+    <div id="colorField" style="display:none;">
+      <label>Card color</label>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <label>QR code</label>
+    <div class="tabbar">
+      <button class="tabbtn active" data-tab="upload" type="button">Upload image</button>
+      <button class="tabbtn" data-tab="text" type="button">Enter link / text</button>
+    </div>
+
+    <div class="tabpane active" id="paneUpload">
+      <label class="filebtn" for="qrFile">
+        <span>Tap to choose a QR screenshot from your phone</span>
+        <input type="file" id="qrFile" accept="image/*">
+      </label>
+    </div>
+    <div class="tabpane" id="paneText">
+      <input type="text" id="qrText" placeholder="Paste the payment link or code text">
+    </div>
+
+    <div class="preview-wrap" id="previewWrap" style="display:none;"></div>
+
+    <button class="primary-btn" id="saveBtn" disabled>Save card</button>
+    <button class="cancel-link" id="cancelAdd" type="button">Cancel</button>
+  </div>
+</div>
+
+<!-- QR display overlay -->
+<div class="qr-overlay" id="qrOverlay">
+  <div class="qr-top">
+    <button class="icon-btn" id="qrClose" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#F4EFE3" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <span></span>
+  </div>
+  <div class="qr-body">
+    <h2 class="qr-bankname" id="qrBankName"></h2>
+    <p class="qr-hint">Show this to the cashier or scan it yourself</p>
+    <div class="qr-frame" id="qrFrame"></div>
+  </div>
+  <div class="qr-bottom">
+    <button class="download-btn" id="downloadBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#21231D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 12l6 6 6-6M5 20h14"/></svg>
+      Download QR
+    </button>
+    <button class="delete-btn" id="deleteBtn">Remove this card</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const COLORS = [
+    { name:'Emerald', from:'#1F6E52', to:'#0F3D2E' },
+    { name:'Indigo',  from:'#3A4B8C', to:'#1E2758' },
+    { name:'Plum',    from:'#7A3E66', to:'#3E1D34' },
+    { name:'Charcoal',from:'#3B3F3C', to:'#171917' },
+    { name:'Brass',   from:'#B98A2E', to:'#6B4E14' },
+    { name:'Rose',    from:'#A0475A', to:'#511F29' },
+  ];
+
+  // Auto-assigned brand-ish colors per bank/e-wallet — picked instead of
+  // making the user choose a color when they select one of these.
+  const BANK_COLORS = {
+    'BDO':        { name:'BDO Blue',       from:'#1E4FA0', to:'#0C2A5E' },
+    'BPI':        { name:'BPI Red',        from:'#C8283C', to:'#6E121F' },
+    'UnionBank':  { name:'UnionBank Orange', from:'#F0812E', to:'#8A430E' },
+    'Metrobank':  { name:'Metrobank Blue', from:'#0B4EA2', to:'#062C5C' },
+    'Maribank':   { name:'Maribank Teal',  from:'#1E8A7A', to:'#0D4A41' },
+    'GoTyme':     { name:'GoTyme Purple',  from:'#7A3FA0', to:'#3F2054' },
+    'GCash':      { name:'GCash Blue',     from:'#1279E0', to:'#0A4A85' },
+    'Maya':       { name:'Maya Green',     from:'#1CBE5B', to:'#0D6E33' },
+  };
+
+  let cards = [];
+  let selectedColor = COLORS[0];
+  let pendingQr = null; // { type: 'image'|'text', data: string }
+  let authRecord = null;  // { username, salt } — not secret, just needed to derive the key
+  let sessionKey = null;  // CryptoKey derived from the password, held only in memory
+  let currentInitial = '•';
+  let currentProfilePic = null; // data URL, or null to show the initial instead
+
+  const $ = (id) => document.getElementById(id);
+  const stack = $('stack'), emptyState = $('emptyState'),
+        stackWrap = $('stackWrap'), countLabel = $('countLabel');
+  const cardEls = new Map(); // id -> DOM element, kept alive across renders so position changes animate
+  const OFFSET = 40, CARD_H = 202;
+
+  function toast(msg){
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(()=> t.classList.remove('show'), 1800);
+  }
+
+  // ---------- crypto helpers ----------
+  function bufToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+  function b64ToBuf(b64){ return Uint8Array.from(atob(b64), c => c.charCodeAt(0)); }
+
+  async function deriveKey(password, saltB64){
+    const salt = b64ToBuf(saltB64);
+    const material = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(password), { name:'PBKDF2' }, false, ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      { name:'PBKDF2', salt, iterations: 150000, hash:'SHA-256' },
+      material,
+      { name:'AES-GCM', length:256 },
+      false,
+      ['encrypt','decrypt']
+    );
+  }
+  async function encryptJSON(key, obj){
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+    return { iv: bufToB64(iv), data: bufToB64(ct) };
+  }
+  async function decryptJSON(key, payload){
+    const pt = await crypto.subtle.decrypt(
+      { name:'AES-GCM', iv: b64ToBuf(payload.iv) }, key, b64ToBuf(payload.data)
+    );
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
+  // ---------- passkey required to register a new wallet (or delete one) ----------
+  const PASSKEY = '1437';
+
+  // ---------- Firebase ----------
+  // Reads window.FIREBASE_CONFIG from firebase-config.js. If it's not filled
+  // in (or the SDK didn't load), we fall back to Claude's window.storage
+  // (useful while previewing here before you deploy), and if that isn't
+  // around either, to an in-memory store that only lasts this tab.
+  let db = null;
+  let firebaseReady = false;
+  function initFirebase(){
+    try{
+      if (window.FIREBASE_CONFIG && window.firebase && window.firebase.initializeApp){
+        firebase.initializeApp(window.FIREBASE_CONFIG);
+        db = firebase.firestore();
+        firebaseReady = true;
+      }
+    }catch(e){ console.error('Firebase init failed:', e); }
+  }
+  initFirebase();
+  function userDoc(uname){ return db.collection('qr_wallet_users').doc(uname); }
+
+  function hasRealStorage(){ return typeof window.storage !== 'undefined' && window.storage !== null; }
+  const memoryStore = {}; // username -> record; last-resort, session-only fallback
+  let usingMemoryFallback = false;
+
+  async function fetchUserRecord(username){
+    const uname = username.toLowerCase();
+    if (firebaseReady){
+      const snap = await userDoc(uname).get();
+      return snap.exists ? snap.data() : null;
+    }
+    if (hasRealStorage()){
+      try{
+        const res = await window.storage.get('qr_wallet_user_' + uname, false);
+        return res && res.value ? JSON.parse(res.value) : null;
+      }catch(e){ return null; }
+    }
+    usingMemoryFallback = true;
+    return memoryStore[uname] || null;
+  }
+  async function saveUserRecord(username, data){
+    const uname = username.toLowerCase();
+    if (firebaseReady){
+      await userDoc(uname).set(data, { merge:true });
+      return;
+    }
+    if (hasRealStorage()){
+      const existing = (await fetchUserRecord(username)) || {};
+      const merged = Object.assign({}, existing, data);
+      await window.storage.set('qr_wallet_user_' + uname, JSON.stringify(merged), false);
+      return;
+    }
+    usingMemoryFallback = true;
+    memoryStore[uname] = Object.assign({}, memoryStore[uname] || {}, data);
+  }
+  async function deleteUserRecord(username){
+    const uname = username.toLowerCase();
+    if (firebaseReady){ await userDoc(uname).delete(); return; }
+    if (hasRealStorage()){
+      try{ await window.storage.delete('qr_wallet_user_' + uname, false); }catch(e){}
+      return;
+    }
+    delete memoryStore[uname];
+  }
+  function warnIfFallback(){
+    if (usingMemoryFallback){
+      toast('Demo mode — add your Firebase keys in firebase-config.js to save this for real');
+    }
+  }
+
+  // ---------- storage (cards are always stored encrypted with the session key) ----------
+  async function persist(){
+    if (!sessionKey || !authRecord) return;
+    try{
+      const payload = await encryptJSON(sessionKey, cards);
+      await saveUserRecord(authRecord.username, { cardsEnc: payload });
+      warnIfFallback();
+    }catch(e){
+      console.error('persist failed:', e);
+      toast("Couldn't save — " + (e && e.message ? e.message : 'try again'));
+    }
+  }
+
+  function uid(){ return 'c' + Date.now() + Math.random().toString(36).slice(2,7); }
+
+  // ---------- auth gate ----------
+  const authScreen = $('authScreen');
+  function showAuthError(id, msg){
+    const el = $(id);
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function hideAuthErrors(){
+    ['setupError','loginError'].forEach(id => { $(id).style.display = 'none'; });
+  }
+
+  document.querySelectorAll('.authtabbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> switchAuthTab(btn.dataset.authtab));
+  });
+  function switchAuthTab(tab){
+    document.querySelectorAll('.authtabbtn').forEach(b=> b.classList.toggle('active', b.dataset.authtab===tab));
+    $('loginFields').style.display = tab === 'login' ? 'block' : 'none';
+    $('setupFields').style.display = tab === 'register' ? 'block' : 'none';
+    hideAuthErrors();
+  }
+
+  function renderAvatar(){
+    const el = $('avatarInitial');
+    el.innerHTML = currentProfilePic
+      ? `<img src="${currentProfilePic}" alt="Profile photo">`
+      : escapeHtml(currentInitial);
+  }
+
+  function unlockApp(){
+    authScreen.style.display = 'none';
+    const name = (authRecord && authRecord.username) ? authRecord.username : '';
+    $('accountName').textContent = name;
+    currentInitial = name ? name.trim().charAt(0).toUpperCase() : '•';
+    renderAvatar();
+    render();
+  }
+
+  $('setupBtn').addEventListener('click', async () => {
+    hideAuthErrors();
+    const username = $('setupUser').value.trim();
+    const pass = $('setupPass').value;
+    const pass2 = $('setupPass2').value;
+    const passkey = $('setupPasskey').value.trim();
+    if (!username || !pass){ showAuthError('setupError', 'Fill in a username and password.'); return; }
+    if (pass.length < 4){ showAuthError('setupError', 'Use at least 4 characters for your password.'); return; }
+    if (pass !== pass2){ showAuthError('setupError', "Passwords don't match."); return; }
+    if (passkey !== PASSKEY){ showAuthError('setupError', 'Incorrect passkey.'); return; }
+
+    $('setupBtn').disabled = true;
+    try{
+      const existing = await fetchUserRecord(username);
+      if (existing){ showAuthError('setupError', 'That username is already taken.'); return; }
+
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const saltB64 = bufToB64(salt);
+      const key = await deriveKey(pass, saltB64);
+      const verifier = await encryptJSON(key, { ok:true, u: username });
+
+      authRecord = { username, salt: saltB64 };
+      sessionKey = key;
+      cards = [];
+      currentProfilePic = null;
+
+      await saveUserRecord(username, { salt: saltB64, verifier, cardsEnc: null, profilePic: null });
+      warnIfFallback();
+    }catch(e){
+      console.error('setup save failed:', e);
+      showAuthError('setupError', "Couldn't create your wallet — " + (e && e.message ? e.message : 'try again.'));
+      return;
+    }finally{
+      $('setupBtn').disabled = false;
+    }
+    unlockApp();
+    toast('Wallet created');
+  });
+
+  $('loginBtn').addEventListener('click', async () => {
+    hideAuthErrors();
+    const username = $('loginUser').value.trim();
+    const pass = $('loginPass').value;
+    if (!username || !pass){ showAuthError('loginError', 'Enter your username and password.'); return; }
+
+    $('loginBtn').disabled = true;
+    try{
+      const record = await fetchUserRecord(username);
+      if (!record){ showAuthError('loginError', 'Incorrect username or password.'); return; }
+      const key = await deriveKey(pass, record.salt);
+      await decryptJSON(key, record.verifier); // throws if the password is wrong
+      authRecord = { username, salt: record.salt };
+      sessionKey = key;
+      cards = record.cardsEnc ? await decryptJSON(key, record.cardsEnc) : [];
+      currentProfilePic = record.profilePic || null;
+      unlockApp();
+    }catch(e){
+      console.error('login failed:', e);
+      showAuthError('loginError', 'Incorrect username or password.');
+    }finally{
+      $('loginBtn').disabled = false;
+    }
+  });
+
+  $('forgotBtn').addEventListener('click', async () => {
+    const username = ($('loginUser').value || '').trim();
+    if (!username){ showAuthError('loginError', 'Type your username above first, then tap this again.'); return; }
+    const pk = prompt('Enter the wallet passkey to confirm this reset:');
+    if (pk === null) return;
+    if (pk.trim() !== PASSKEY){ showAuthError('loginError', 'Incorrect passkey.'); return; }
+    const sure = confirm(`This permanently deletes the wallet "${username}" and everything saved in it. Continue?`);
+    if (!sure) return;
+    try{
+      await deleteUserRecord(username);
+      toast('Wallet deleted');
+      $('loginPass').value = '';
+    }catch(e){
+      console.error('delete failed:', e);
+      showAuthError('loginError', "Couldn't delete that wallet — try again.");
+    }
+  });
+
+  // ---------- account dropdown ----------
+  const accountToggle = $('accountToggle'), accountMenu = $('accountMenu');
+  function closeAccountMenu(){
+    accountToggle.classList.remove('open');
+    accountMenu.classList.remove('open');
+    accountToggle.setAttribute('aria-expanded', 'false');
+  }
+  accountToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = accountMenu.classList.toggle('open');
+    accountToggle.classList.toggle('open', open);
+    accountToggle.setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', (e) => {
+    if (!accountMenu.classList.contains('open')) return;
+    if (!accountMenu.contains(e.target) && !accountToggle.contains(e.target)) closeAccountMenu();
+  });
+
+  $('changePhotoBtn').addEventListener('click', () => {
+    closeAccountMenu();
+    $('avatarFile').click();
+  });
+  $('avatarFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file || !authRecord) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = async () => {
+        // center-crop to a square, then downscale, so it fills the round avatar nicely
+        const size = Math.min(img.width, img.height);
+        const sx = (img.width - size) / 2, sy = (img.height - size) / 2;
+        const target = 240;
+        const canvas = document.createElement('canvas');
+        canvas.width = target; canvas.height = target;
+        canvas.getContext('2d').drawImage(img, sx, sy, size, size, 0, 0, target, target);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        currentProfilePic = dataUrl;
+        renderAvatar();
+        try{
+          await saveUserRecord(authRecord.username, { profilePic: dataUrl });
+          warnIfFallback();
+          toast('Profile photo updated');
+        }catch(err){
+          toast("Couldn't save that photo — try again");
+        }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  $('lockBtn').addEventListener('click', () => {
+    closeAccountMenu();
+    sessionKey = null;
+    authRecord = null;
+    cards = [];
+    currentProfilePic = null;
+    currentInitial = '•';
+    cardEls.forEach(el => el.remove());
+    cardEls.clear();
+    $('loginUser').value = '';
+    $('loginPass').value = '';
+    switchAuthTab('login');
+    authScreen.style.display = 'flex';
+  });
+
+  // ---------- render ----------
+  // Index 0 = front/top of the deck. Elements persist across renders (keyed by id)
+  // so moving a card to the front animates its position instead of jumping.
+  function render(){
+    if (cards.length === 0){
+      cardEls.forEach(el => el.remove());
+      cardEls.clear();
+      emptyState.style.display = 'block';
+      stackWrap.style.display = 'none';
+      countLabel.style.display = 'none';
+      return;
+    }
+    emptyState.style.display = 'none';
+    stackWrap.style.display = 'block';
+    countLabel.style.display = 'block';
+    countLabel.textContent = cards.length + (cards.length === 1 ? ' card saved' : ' cards saved');
+
+    stack.style.height = (CARD_H + (cards.length - 1) * OFFSET) + 'px';
+
+    // drop elements for cards that no longer exist
+    for (const [id, el] of cardEls){
+      if (!cards.some(c => c.id === id)){ el.remove(); cardEls.delete(id); }
+    }
+
+    cards.forEach((c, i) => {
+      let el = cardEls.get(c.id);
+      if (!el){
+        el = document.createElement('div');
+        el.className = 'card';
+        el.addEventListener('click', () => selectCard(c.id));
+        stack.appendChild(el);
+        cardEls.set(c.id, el);
+      }
+      el.classList.toggle('is-front', i === 0);
+      el.style.zIndex = cards.length - i;
+      el.style.top = (i * OFFSET) + 'px';
+      el.style.background = `linear-gradient(135deg, ${c.from}, ${c.to})`;
+      el.innerHTML = `
+        <div class="card-top">
+          <div class="card-name">${escapeHtml(c.name)}</div>
+          <div class="chip"></div>
+        </div>
+        <div class="card-mid">•••• •••• •••• ${String(1000 + (i*37)%9000).slice(0,4)}</div>
+        <div class="card-bottom">
+          <span class="card-label">${escapeHtml(c.name)}</span>
+          <span class="qr-tag">QR</span>
+        </div>`;
+    });
+  }
+
+  // Tapping a card brings it to the top of the deck, then reveals its QR.
+  function selectCard(id){
+    const idx = cards.findIndex(c => c.id === id);
+    if (idx <= 0){
+      // already on top — just show its QR
+      openQr(id);
+      return;
+    }
+    const [picked] = cards.splice(idx, 1);
+    cards.unshift(picked);
+    render();
+    persist();
+    setTimeout(() => openQr(id), 260);
+  }
+
+  function escapeHtml(s){
+    const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+  }
+
+  // ---------- QR view ----------
+  function slugify(s){
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'qr-code';
+  }
+
+  function getQrDownloadUrl(card){
+    if (card.qrType === 'image') return { url: card.qrData, ext: 'jpg' };
+    // text-based QRs are rendered by qrcodejs as a <canvas> (with an <img> fallback)
+    const canvas = $('qrFrame').querySelector('canvas');
+    if (canvas) return { url: canvas.toDataURL('image/png'), ext: 'png' };
+    const img = $('qrFrame').querySelector('img');
+    return { url: img ? img.src : '', ext: 'png' };
+  }
+
+  async function downloadQr(card){
+    const { url, ext } = getQrDownloadUrl(card);
+    if (!url){ toast("Couldn't prepare that QR for download"); return; }
+    const filename = `${slugify(card.name)}-qr.${ext}`;
+
+    // On phones, hand off to the native share sheet so the QR can go straight
+    // into Messenger, GCash, email, etc. Falls back to a plain download.
+    try{
+      const blob = await (await fetch(url)).blob();
+      const file = new File([blob], filename, { type: blob.type || (ext === 'png' ? 'image/png' : 'image/jpeg') });
+      if (navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: card.name + ' QR' });
+        return;
+      }
+    }catch(e){ /* user cancelled share, or share unsupported — fall back below */ }
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('QR saved — ready to send');
+  }
+
+  function openQr(id){
+    const c = cards.find(x=>x.id===id);
+    if(!c) return;
+    $('qrBankName').textContent = c.name;
+    const frame = $('qrFrame');
+    frame.innerHTML = '';
+    if (c.qrType === 'image'){
+      const img = document.createElement('img');
+      img.src = c.qrData;
+      frame.appendChild(img);
+    } else {
+      const div = document.createElement('div');
+      frame.appendChild(div);
+      new QRCode(div, { text: c.qrData, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+    }
+    $('qrOverlay').classList.add('open');
+    $('deleteBtn').onclick = () => removeCard(id);
+    $('downloadBtn').onclick = () => downloadQr(c);
+  }
+  $('qrClose').addEventListener('click', ()=> $('qrOverlay').classList.remove('open'));
+
+  async function removeCard(id){
+    cards = cards.filter(c=>c.id!==id);
+    await persist();
+    $('qrOverlay').classList.remove('open');
+    render();
+    toast('Card removed');
+  }
+
+  // ---------- Add card sheet ----------
+  const addOverlay = $('addOverlay');
+  $('fabAdd').addEventListener('click', () => { closeAccountMenu(); openAdd(); });
+  $('cancelAdd').addEventListener('click', closeAdd);
+  addOverlay.addEventListener('click', (e)=>{ if(e.target === addOverlay) closeAdd(); });
+
+  function openAdd(){
+    resetForm();
+    addOverlay.classList.add('open');
+  }
+  function closeAdd(){ addOverlay.classList.remove('open'); }
+
+  function resetForm(){
+    $('bankSelect').value = '';
+    $('customName').style.display = 'none';
+    $('customName').value = '';
+    $('qrFile').value = '';
+    $('qrText').value = '';
+    pendingQr = null;
+    $('previewWrap').style.display = 'none';
+    $('previewWrap').innerHTML = '';
+    selectedColor = COLORS[0];
+    buildSwatches();
+    $('colorField').style.display = 'none';
+    switchTab('upload');
+    updateSaveState();
+  }
+
+  function buildSwatches(){
+    const wrap = $('swatches');
+    wrap.innerHTML = '';
+    COLORS.forEach((c)=>{
+      const sw = document.createElement('div');
+      sw.className = 'swatch' + (c===selectedColor ? ' selected':'');
+      sw.style.background = `linear-gradient(135deg, ${c.from}, ${c.to})`;
+      sw.title = c.name;
+      sw.addEventListener('click', ()=>{ selectedColor = c; buildSwatches(); });
+      wrap.appendChild(sw);
+    });
+  }
+
+  $('bankSelect').addEventListener('change', (e)=>{
+    const val = e.target.value;
+    $('customName').style.display = val === '__custom' ? 'block' : 'none';
+    if (val === '__custom'){
+      // custom banks don't have a known brand color — let the user pick one
+      $('colorField').style.display = 'block';
+      selectedColor = COLORS[0];
+      buildSwatches();
+    } else if (BANK_COLORS[val]){
+      // known bank/e-wallet — color is assigned automatically
+      $('colorField').style.display = 'none';
+      selectedColor = BANK_COLORS[val];
+    } else {
+      $('colorField').style.display = 'none';
+    }
+    updateSaveState();
+  });
+  $('customName').addEventListener('input', updateSaveState);
+
+  document.querySelectorAll('.tabbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> switchTab(btn.dataset.tab));
+  });
+  function switchTab(tab){
+    document.querySelectorAll('.tabbtn').forEach(b=> b.classList.toggle('active', b.dataset.tab===tab));
+    $('paneUpload').classList.toggle('active', tab==='upload');
+    $('paneText').classList.toggle('active', tab==='text');
+  }
+
+  $('qrFile').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      // downscale to keep storage small
+      const img = new Image();
+      img.onload = ()=>{
+        const maxDim = 500;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim){
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width*scale); height = Math.round(height*scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        pendingQr = { type: 'image', data: canvas.toDataURL('image/jpeg', 0.85) };
+        showPreview();
+        updateSaveState();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  $('qrText').addEventListener('input', (e)=>{
+    const val = e.target.value.trim();
+    if (val){
+      pendingQr = { type:'text', data: val };
+      showPreview();
+    } else {
+      pendingQr = null;
+      $('previewWrap').style.display = 'none';
+    }
+    updateSaveState();
+  });
+
+  function showPreview(){
+    const wrap = $('previewWrap');
+    wrap.innerHTML = '';
+    wrap.style.display = 'flex';
+    if (pendingQr.type === 'image'){
+      const img = document.createElement('img');
+      img.src = pendingQr.data;
+      wrap.appendChild(img);
+    } else {
+      const div = document.createElement('div');
+      wrap.appendChild(div);
+      new QRCode(div, { text: pendingQr.data, width: 124, height: 124, correctLevel: QRCode.CorrectLevel.M });
+    }
+  }
+
+  function currentName(){
+    const sel = $('bankSelect').value;
+    if (sel === '__custom') return $('customName').value.trim();
+    return sel;
+  }
+
+  function updateSaveState(){
+    const ok = currentName() && pendingQr;
+    $('saveBtn').disabled = !ok;
+  }
+
+  $('saveBtn').addEventListener('click', async ()=>{
+    if ($('saveBtn').disabled) return;
+    const card = {
+      id: uid(),
+      name: currentName(),
+      from: selectedColor.from,
+      to: selectedColor.to,
+      qrType: pendingQr.type,
+      qrData: pendingQr.data
+    };
+    cards.unshift(card);
+    await persist();
+    closeAdd();
+    render();
+    toast('Card saved');
+  });
+
+  switchAuthTab('login');
+})();
+</script>
+</body>
+</html>
