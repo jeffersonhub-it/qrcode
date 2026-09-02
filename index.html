@@ -830,7 +830,18 @@
       warnIfFallback();
     }catch(e){
       console.error('persist failed:', e);
-      toast("Couldn't save — " + (e && e.message ? e.message : 'try again'));
+      const msg = (e && e.message) ? e.message : 'unknown error';
+      // A toast alone is easy to miss (it fades in ~2s) and this failure
+      // means the card that was just "added" on screen did NOT actually
+      // save — silently continuing would look exactly like the "cards
+      // disappear after logging back in" bug. Block with an alert instead
+      // so it can't go unnoticed, and hint at the most common cause.
+      alert(
+        "Hindi na-save ang huling card na ito. " +
+        (/quota|exceed|size|too large|payload/i.test(msg)
+          ? "Malamang masyado nang malaki ang kabuuang laki ng mga naka-save mong QR litrato. Subukan mag-alis ng ilang litratong QR o gumamit ng mas maliliit/malinaw na litrato."
+          : "Error: " + msg + ". Suriin ang koneksyon sa internet at subukan ulit.")
+      );
     }
   }
 
@@ -995,13 +1006,16 @@
         const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
         currentProfilePic = dataUrl;
         renderAvatar();
-        try{
-          await saveUserRecord(authRecord.username, { profilePic: dataUrl });
-          warnIfFallback();
-          toast('Profile photo updated');
-        }catch(err){
-          toast("Couldn't save that photo — try again");
-        }
+        persistChain = persistChain.then(async () => {
+          try{
+            await saveUserRecord(authRecord.username, { profilePic: dataUrl });
+            warnIfFallback();
+            toast('Profile photo updated');
+          }catch(err){
+            alert("Hindi na-save ang bagong profile photo. Suriin ang koneksyon sa internet at subukan ulit.");
+          }
+        }, () => {}); // even if a prior queued save failed, still attempt this one
+        await persistChain;
       };
       img.src = ev.target.result;
     };
@@ -1230,24 +1244,46 @@
     $('paneText').classList.toggle('active', tab==='text');
   }
 
+  // QR codes are dense black/white patterns, which JPEG compresses poorly —
+  // a "clear" photo of one can easily stay 200-400KB+ even after resizing.
+  // Since all of a user's cards live in a single ~1MB storage record, a
+  // couple of large photos can silently blow past that limit and fail to
+  // save. To prevent that: downscale, then re-compress at progressively
+  // lower quality until the result is comfortably small, and warn the user
+  // immediately (at upload time, not at save time) if it still won't fit.
+  const MAX_QR_IMAGE_CHARS = 140000; // ~100KB decoded — plenty for a scannable QR photo
+  function compressQrImage(img){
+    const maxDim = 480;
+    let { width, height } = img;
+    if (width > maxDim || height > maxDim){
+      const scale = maxDim / Math.max(width, height);
+      width = Math.round(width * scale); height = Math.round(height * scale);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+
+    let quality = 0.82;
+    let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (dataUrl.length > MAX_QR_IMAGE_CHARS && quality > 0.3){
+      quality -= 0.15;
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+    }
+    return { dataUrl, tooLarge: dataUrl.length > MAX_QR_IMAGE_CHARS };
+  }
+
   $('qrFile').addEventListener('change', (e)=>{
     const file = e.target.files[0];
     if(!file) return;
     const reader = new FileReader();
     reader.onload = (ev)=>{
-      // downscale to keep storage small
       const img = new Image();
       img.onload = ()=>{
-        const maxDim = 500;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim){
-          const scale = maxDim / Math.max(width, height);
-          width = Math.round(width*scale); height = Math.round(height*scale);
+        const { dataUrl, tooLarge } = compressQrImage(img);
+        if (tooLarge){
+          alert("Masyadong malaki pa rin ang larawang ito kahit na-compress na, kaya baka hindi ito ma-save. Subukan mag-crop nang mas malapit sa QR code lang, o kumuha ng bagong litrato sa mas magandang liwanag.");
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        pendingQr = { type: 'image', data: canvas.toDataURL('image/jpeg', 0.85) };
+        pendingQr = { type: 'image', data: dataUrl };
         showPreview();
         updateSaveState();
       };
