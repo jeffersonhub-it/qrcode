@@ -458,6 +458,67 @@
     opacity:0; pointer-events:none; transition: all .25s ease; z-index:80;
   }
   .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* blur the wallet contents whenever the PIN gate hasn't been passed yet */
+  .app{ transition: filter .35s ease; }
+  .app.pin-locked{ filter: blur(22px) saturate(0.7); pointer-events:none; user-select:none; }
+
+  /* PIN gate — shown right after login/register, before any card or QR is visible */
+  .pin-screen{
+    position: fixed; inset:0; z-index: 110;
+    display:flex; align-items:center; justify-content:center;
+    padding: 24px calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+    background:
+      radial-gradient(circle at 20% -10%, #163B31 0%, transparent 55%),
+      linear-gradient(180deg, var(--vault-bg-1), var(--vault-bg-2));
+    opacity:0; pointer-events:none; transition: opacity .22s ease;
+  }
+  .pin-screen.open{ opacity:1; pointer-events:auto; }
+  .pin-card{
+    width:100%; max-width: 340px;
+    background: var(--paper);
+    color:#21231D;
+    text-align:center;
+    border-radius: var(--radius-sheet);
+    padding: 32px 26px calc(30px + env(safe-area-inset-bottom));
+    box-shadow: 0 24px 50px -18px rgba(0,0,0,0.6);
+  }
+  .pin-card .vault-icon{ margin: 0 auto 14px; }
+  .pin-card .eyebrow{ color:#9C7A1E; }
+  .pin-card h1{ color:#21231D; font-size:22px; margin-bottom:6px; }
+  .pin-card .auth-sub{ margin-bottom:22px; }
+  .pin-dots{ display:flex; justify-content:center; gap:16px; margin: 0 0 22px; }
+  .pin-dot{
+    width:16px; height:16px; border-radius:50%;
+    border: 1.5px solid #C9BFA0; background:transparent;
+    transition: background .12s ease, border-color .12s ease, transform .12s ease;
+  }
+  .pin-dot.filled{ background:#21231D; border-color:#21231D; }
+  .pin-dots.shake{ animation: pinShake .32s ease; }
+  .pin-dots.shake .pin-dot{ border-color:#B23A28; }
+  @keyframes pinShake{
+    10%,90%{ transform: translateX(-1px); }
+    20%,80%{ transform: translateX(3px); }
+    30%,50%,70%{ transform: translateX(-7px); }
+    40%,60%{ transform: translateX(7px); }
+  }
+  .keypad{
+    display:grid; grid-template-columns: repeat(3, 1fr);
+    gap: 12px; margin: 0 auto; max-width: 260px;
+  }
+  .keypad-btn{
+    aspect-ratio: 1; border-radius:50%; border:1px solid #E2DAC4;
+    background:#fff; font-family:'Fraunces', serif; font-weight:500; font-size:21px;
+    color:#21231D; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .keypad-btn:active{ background:#EDE6D3; }
+  .keypad-btn.ghost{ background:none; border:none; box-shadow:none; cursor:default; }
+  .keypad-btn.backspace{ background:none; border:none; box-shadow:none; }
+  .keypad-btn.backspace svg{ width:20px; height:20px; }
+  .pin-error{
+    font-size:13px; color:#B23A28; margin: 16px 0 0; min-height:16px;
+  }
 </style>
 </head>
 <body>
@@ -505,7 +566,42 @@
   </div>
 </div>
 
-<div class="app">
+<!-- PIN gate — shown right after log in / register, blurs the wallet behind it -->
+<div class="pin-screen" id="pinScreen">
+  <div class="pin-card">
+    <svg class="vault-icon" viewBox="0 0 24 24" fill="none" stroke="#CBA135" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M21 12h-3M6 12H3"/></svg>
+    <p class="eyebrow">ENTER PIN</p>
+    <h1>Unlock your cards</h1>
+    <p class="auth-sub">Enter your 4-digit PIN to view your QR codes.</p>
+    <div class="pin-dots" id="pinDots">
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+    </div>
+    <div class="keypad" id="pinKeypad">
+      <button class="keypad-btn" type="button" data-key="1">1</button>
+      <button class="keypad-btn" type="button" data-key="2">2</button>
+      <button class="keypad-btn" type="button" data-key="3">3</button>
+      <button class="keypad-btn" type="button" data-key="4">4</button>
+      <button class="keypad-btn" type="button" data-key="5">5</button>
+      <button class="keypad-btn" type="button" data-key="6">6</button>
+      <button class="keypad-btn" type="button" data-key="7">7</button>
+      <button class="keypad-btn" type="button" data-key="8">8</button>
+      <button class="keypad-btn" type="button" data-key="9">9</button>
+      <button class="keypad-btn ghost" type="button" tabindex="-1"></button>
+      <button class="keypad-btn" type="button" data-key="0">0</button>
+      <button class="keypad-btn backspace" type="button" id="pinBackspace" aria-label="Backspace">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#21231D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4H8l-6 8 6 8h13a2 2 0 002-2V6a2 2 0 00-2-2z"/><path d="M18 9l-6 6M12 9l6 6"/></svg>
+      </button>
+    </div>
+    <p class="pin-error" id="pinError"></p>
+    <button class="cancel-link" id="pinForgotBtn" type="button">Forgot PIN?</button>
+    <button class="cancel-link" id="pinLogoutBtn" type="button">Log out instead</button>
+  </div>
+</div>
+
+<div class="app" id="appRoot">
 
   <header>
     <button class="account" id="accountToggle" aria-haspopup="true" aria-expanded="false">
@@ -517,6 +613,7 @@
       <button class="menu-item" id="fabAdd" type="button">Add card</button>
       <button class="menu-item" id="changePhotoBtn" type="button">Change photo</button>
       <input type="file" id="avatarFile" accept="image/*" style="display:none;">
+      <button class="menu-item" id="changePinBtn" type="button">Change PIN</button>
       <button class="menu-item" id="installBtnMenu" type="button" style="display:none;">Install app</button>
       <div class="menu-divider"></div>
       <button class="logout-btn" id="lockBtn">Log out</button>
@@ -608,6 +705,26 @@
   </div>
 </div>
 
+<!-- Change PIN sheet -->
+<div class="overlay" id="changePinOverlay">
+  <div class="sheet">
+    <div class="grabber"></div>
+    <h2>Change PIN</h2>
+    <p class="sub">This 4-digit PIN blurs your cards until it's entered, on top of your password.</p>
+
+    <label for="pinCurrent">Current PIN</label>
+    <input type="password" id="pinCurrent" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="••••">
+    <label for="pinNew">New PIN</label>
+    <input type="password" id="pinNew" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="4 digits">
+    <label for="pinNewConfirm">Confirm new PIN</label>
+    <input type="password" id="pinNewConfirm" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="4 digits">
+
+    <button class="primary-btn" id="pinSaveBtn">Save PIN</button>
+    <p class="auth-error" id="pinChangeError" style="display:none;"></p>
+    <button class="cancel-link" id="cancelPinChange" type="button">Cancel</button>
+  </div>
+</div>
+
 <!-- QR display overlay -->
 <div class="qr-overlay" id="qrOverlay">
   <div class="qr-top">
@@ -666,7 +783,8 @@
 
   const $ = (id) => document.getElementById(id);
   const stack = $('stack'), emptyState = $('emptyState'),
-        stackWrap = $('stackWrap'), countLabel = $('countLabel');
+        stackWrap = $('stackWrap'), countLabel = $('countLabel'),
+        appEl = $('appRoot');
   const cardEls = new Map(); // id -> DOM element, kept alive across renders so position changes animate
   const OFFSET = 40, CARD_H = 202;
 
@@ -777,6 +895,7 @@
 
   // ---------- passkey required to register a new wallet (or delete one) ----------
   const PASSKEY = '1437';
+  const DEFAULT_PIN = '1437'; // shown-to-cashier safety gate — separate from the account password
 
   // ---------- Firebase ----------
   // Reads window.FIREBASE_CONFIG from firebase-config.js. If it's not filled
@@ -1030,7 +1149,90 @@
     currentInitial = name ? name.trim().charAt(0).toUpperCase() : '•';
     renderAvatar();
     render();
+    showPinGate();
   }
+
+  // ---------- PIN gate ----------
+  // A second, lighter lock shown every time the wallet is unlocked with the
+  // account password: the cards stay blurred (and untappable) behind it
+  // until the 4-digit PIN is entered, so a glance at an unattended phone
+  // can't reveal the QR codes. Defaults to 1437; changeable from the
+  // account menu, stored per-user alongside the rest of the record.
+  const pinScreenEl = $('pinScreen');
+  const pinDotsEl = $('pinDots');
+  let pinEntry = '';
+
+  function currentPin(){
+    return (authRecord && authRecord.pinCode) ? authRecord.pinCode : DEFAULT_PIN;
+  }
+
+  function showPinGate(){
+    pinEntry = '';
+    $('pinError').textContent = '';
+    renderPinDots();
+    appEl.classList.add('pin-locked');
+    pinScreenEl.style.display = 'flex';
+    requestAnimationFrame(() => pinScreenEl.classList.add('open'));
+  }
+  function hidePinGate(){
+    pinScreenEl.classList.remove('open');
+    appEl.classList.remove('pin-locked');
+    setTimeout(() => { pinScreenEl.style.display = 'none'; }, 220);
+  }
+
+  function renderPinDots(){
+    const dots = pinDotsEl.querySelectorAll('.pin-dot');
+    dots.forEach((d, i) => d.classList.toggle('filled', i < pinEntry.length));
+  }
+
+  function pinKeyPress(digit){
+    if (pinEntry.length >= 4) return;
+    pinEntry += digit;
+    $('pinError').textContent = '';
+    renderPinDots();
+    if (pinEntry.length === 4){
+      if (pinEntry === currentPin()){
+        setTimeout(hidePinGate, 120);
+      } else {
+        pinDotsEl.classList.remove('shake'); void pinDotsEl.offsetWidth; pinDotsEl.classList.add('shake');
+        $('pinError').textContent = 'Incorrect PIN. Try again.';
+        setTimeout(() => { pinEntry = ''; renderPinDots(); }, 320);
+      }
+    }
+  }
+  $('pinKeypad').addEventListener('click', (e) => {
+    const btn = e.target.closest('.keypad-btn[data-key]');
+    if (btn) pinKeyPress(btn.dataset.key);
+  });
+  $('pinBackspace').addEventListener('click', () => {
+    pinEntry = pinEntry.slice(0, -1);
+    $('pinError').textContent = '';
+    renderPinDots();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!pinScreenEl.classList.contains('open')) return;
+    if (/^[0-9]$/.test(e.key)) pinKeyPress(e.key);
+    else if (e.key === 'Backspace'){ pinEntry = pinEntry.slice(0, -1); renderPinDots(); }
+  });
+
+  $('pinForgotBtn').addEventListener('click', async () => {
+    if (!authRecord) return;
+    const pass = prompt('Enter your account password to reset your PIN back to the default (1437):');
+    if (pass === null) return;
+    try{
+      const record = await fetchUserRecord(authRecord.username);
+      const key = await deriveKey(pass, record.salt);
+      await decryptJSON(key, record.verifier); // throws if the password is wrong
+      await saveUserRecord(authRecord.username, { pinCode: DEFAULT_PIN });
+      authRecord.pinCode = DEFAULT_PIN;
+      $('pinError').textContent = '';
+      toast('PIN reset — enter 1437 to continue');
+    }catch(e){
+      $('pinError').textContent = 'Incorrect password.';
+    }
+  });
+
+  $('pinLogoutBtn').addEventListener('click', () => { hidePinGate(); $('lockBtn').click(); });
 
   $('setupBtn').addEventListener('click', async () => {
     hideAuthErrors();
@@ -1053,12 +1255,12 @@
       const key = await deriveKey(pass, saltB64);
       const verifier = await encryptJSON(key, { ok:true, u: username });
 
-      authRecord = { username, salt: saltB64 };
+      authRecord = { username, salt: saltB64, pinCode: DEFAULT_PIN };
       sessionKey = key;
       cards = [];
       currentProfilePic = null;
 
-      await saveUserRecord(username, { salt: saltB64, verifier, cardOrder: [], profilePic: null });
+      await saveUserRecord(username, { salt: saltB64, verifier, cardOrder: [], profilePic: null, pinCode: DEFAULT_PIN });
       warnIfFallback();
     }catch(e){
       console.error('setup save failed:', e);
@@ -1084,7 +1286,7 @@
       const key = await deriveKey(pass, record.salt);
       await decryptJSON(key, record.verifier); // throws if the password is wrong
       const uname = username.toLowerCase();
-      authRecord = { username, salt: record.salt };
+      authRecord = { username, salt: record.salt, pinCode: record.pinCode || DEFAULT_PIN };
       sessionKey = key;
       const needsMigration = !record.cardOrder && !!record.cardsEnc;
       cards = record.cardOrder
@@ -1191,8 +1393,55 @@
     cardEls.clear();
     $('loginUser').value = '';
     $('loginPass').value = '';
+    pinEntry = '';
+    pinScreenEl.classList.remove('open');
+    pinScreenEl.style.display = 'none';
+    appEl.classList.remove('pin-locked');
     switchAuthTab('login');
     authScreen.style.display = 'flex';
+  });
+
+  // ---------- change PIN ----------
+  const changePinOverlay = $('changePinOverlay');
+  function openChangePin(){
+    closeAccountMenu();
+    $('pinCurrent').value = '';
+    $('pinNew').value = '';
+    $('pinNewConfirm').value = '';
+    $('pinChangeError').style.display = 'none';
+    changePinOverlay.classList.add('open');
+  }
+  function closeChangePin(){ changePinOverlay.classList.remove('open'); }
+  $('changePinBtn').addEventListener('click', openChangePin);
+  $('cancelPinChange').addEventListener('click', closeChangePin);
+
+  function showPinChangeError(msg){
+    const el = $('pinChangeError');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  $('pinSaveBtn').addEventListener('click', async () => {
+    if (!authRecord) return;
+    const cur = $('pinCurrent').value.trim();
+    const next = $('pinNew').value.trim();
+    const confirmPin = $('pinNewConfirm').value.trim();
+    if (cur !== currentPin()){ showPinChangeError('Current PIN is incorrect.'); return; }
+    if (!/^\d{4}$/.test(next)){ showPinChangeError('New PIN must be exactly 4 digits.'); return; }
+    if (next !== confirmPin){ showPinChangeError("New PINs don't match."); return; }
+
+    $('pinSaveBtn').disabled = true;
+    try{
+      await saveUserRecord(authRecord.username, { pinCode: next });
+      authRecord.pinCode = next;
+      warnIfFallback();
+      closeChangePin();
+      toast('PIN updated');
+    }catch(e){
+      console.error('pin update failed:', e);
+      showPinChangeError("Couldn't save your new PIN — try again.");
+    }finally{
+      $('pinSaveBtn').disabled = false;
+    }
   });
 
   // ---------- render ----------
