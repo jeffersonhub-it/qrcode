@@ -327,10 +327,30 @@
     font-size: 13.5px; color:#6B6455; cursor:pointer; text-align:center;
   }
   .filebtn input{ display:none; }
-  .preview-wrap{ display:flex; justify-content:center; margin-top:14px; }
-  .preview-wrap img, .preview-wrap canvas{
-    width: 140px; height:140px; border-radius:12px; background:#fff; padding:8px;
+  .filebtn .filebtn-sub{ display:block; font-size:11.5px; color:#8A8267; margin-top:3px; }
+  /* preview grid — one tile per pending QR image/text so several selections
+     can be reviewed (and individually removed) before saving. Each tile is a
+     fixed box with the image auto-fit inside (object-fit: contain) so any
+     source resolution or aspect ratio displays correctly without stretching
+     or cropping — no "recommended size" needed from the user. */
+  .preview-wrap{ display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:14px; }
+  .preview-tile{
+    position:relative;
+    width: 84px; height:84px; border-radius:12px; background:#fff; padding:8px;
     border:1px solid #E2DAC4;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .preview-tile img, .preview-tile canvas, .preview-tile > div{
+    max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain;
+  }
+  .preview-tile.is-loading{
+    background: repeating-linear-gradient(45deg, #F4EFE3, #F4EFE3 8px, #ECE4CE 8px, #ECE4CE 16px);
+  }
+  .preview-remove{
+    position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%;
+    background:#21231D; color:#F4EFE3; border:2px solid #F4EFE3; box-sizing:content-box;
+    font-size:13px; line-height:1; font-family:'Inter',sans-serif;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
 
   .primary-btn{
@@ -361,7 +381,10 @@
     background:#fff; border-radius:20px; padding:20px;
     box-shadow: 0 20px 40px -16px rgba(0,0,0,0.6);
   }
-  .qr-frame img, .qr-frame canvas{ display:block; width: 62vw; max-width: 260px; height:auto; }
+  .qr-frame img, .qr-frame canvas{
+    display:block; width:auto; height:auto;
+    max-width: min(62vw, 260px); max-height: 55vh; object-fit:contain;
+  }
   .qr-bottom{ padding: 20px 30px calc(26px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:10px; }
   .download-btn{
     width:100%; padding:14px; border-radius:14px; border:none;
@@ -569,8 +592,9 @@
 
     <div class="tabpane active" id="paneUpload">
       <label class="filebtn" for="qrFile">
-        <span>Tap to choose a QR screenshot from your phone</span>
-        <input type="file" id="qrFile" accept="image/*">
+        <span>Tap to choose QR screenshots from your phone</span>
+        <span class="filebtn-sub">You can select more than one — each becomes its own card</span>
+        <input type="file" id="qrFile" accept="image/*" multiple>
       </label>
     </div>
     <div class="tabpane" id="paneText">
@@ -634,7 +658,7 @@
 
   let cards = [];
   let selectedColor = COLORS[0];
-  let pendingQr = null; // { type: 'image'|'text', data: string }
+  let pendingItems = []; // [{ type: 'image'|'text', data: string }] — one entry per QR about to be saved (or null while an image is still being processed)
   let authRecord = null;  // { username, salt } — not secret, just needed to derive the key
   let sessionKey = null;  // CryptoKey derived from the password, held only in memory
   let currentInitial = '•';
@@ -1193,7 +1217,7 @@
     $('customName').value = '';
     $('qrFile').value = '';
     $('qrText').value = '';
-    pendingQr = null;
+    pendingItems = [];
     $('previewWrap').style.display = 'none';
     $('previewWrap').innerHTML = '';
     selectedColor = COLORS[0];
@@ -1244,79 +1268,108 @@
     $('paneText').classList.toggle('active', tab==='text');
   }
 
-  // QR codes are dense black/white patterns, which JPEG compresses poorly —
-  // a "clear" photo of one can easily stay 200-400KB+ even after resizing.
-  // Since all of a user's cards live in a single ~1MB storage record, a
-  // couple of large photos can silently blow past that limit and fail to
-  // save. To prevent that: downscale, then re-compress at progressively
-  // lower quality until the result is comfortably small, and warn the user
-  // immediately (at upload time, not at save time) if it still won't fit.
-  const MAX_QR_IMAGE_CHARS = 140000; // ~100KB decoded — plenty for a scannable QR photo
-  function compressQrImage(img){
-    const maxDim = 480;
+  // No fixed/recommended size is enforced any more — any photo, of any
+  // resolution or aspect ratio, is accepted and displayed as-is. The only
+  // thing this does is losslessly-in-practice re-encode as JPEG, and only
+  // downscale if the original is well beyond what a phone screen can even
+  // show (a pure performance/memory safeguard, not a size restriction —
+  // it never rejects a file or warns the user).
+  const SAFETY_MAX_DIM = 2200;
+  function processQrImage(img){
     let { width, height } = img;
-    if (width > maxDim || height > maxDim){
-      const scale = maxDim / Math.max(width, height);
+    if (width > SAFETY_MAX_DIM || height > SAFETY_MAX_DIM){
+      const scale = SAFETY_MAX_DIM / Math.max(width, height);
       width = Math.round(width * scale); height = Math.round(height * scale);
     }
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-
-    let quality = 0.82;
-    let dataUrl = canvas.toDataURL('image/jpeg', quality);
-    while (dataUrl.length > MAX_QR_IMAGE_CHARS && quality > 0.3){
-      quality -= 0.15;
-      dataUrl = canvas.toDataURL('image/jpeg', quality);
-    }
-    return { dataUrl, tooLarge: dataUrl.length > MAX_QR_IMAGE_CHARS };
+    return canvas.toDataURL('image/jpeg', 0.92);
   }
 
-  $('qrFile').addEventListener('change', (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
+  // Reads a single File into a pendingItems slot, in place, so that
+  // selecting several images at once keeps its results in selection order
+  // even though the individual reads finish asynchronously.
+  function loadImageIntoSlot(file, index){
     const reader = new FileReader();
     reader.onload = (ev)=>{
       const img = new Image();
       img.onload = ()=>{
-        const { dataUrl, tooLarge } = compressQrImage(img);
-        if (tooLarge){
-          alert("Masyadong malaki pa rin ang larawang ito kahit na-compress na, kaya baka hindi ito ma-save. Subukan mag-crop nang mas malapit sa QR code lang, o kumuha ng bagong litrato sa mas magandang liwanag.");
-        }
-        pendingQr = { type: 'image', data: dataUrl };
+        pendingItems[index] = { type: 'image', data: processQrImage(img) };
+        showPreview();
+        updateSaveState();
+      };
+      img.onerror = ()=>{
+        pendingItems[index] = null; // drop unreadable file
         showPreview();
         updateSaveState();
       };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
+  }
+
+  $('qrFile').addEventListener('change', (e)=>{
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    // Selecting images appends to whatever's already pending, so tapping
+    // the picker more than once builds up one big batch instead of
+    // replacing the previous selection.
+    const startIndex = pendingItems.length;
+    files.forEach((file, i)=>{
+      pendingItems.push(null); // placeholder while it loads, keeps ordering + shows a loading tile
+      loadImageIntoSlot(file, startIndex + i);
+    });
+    showPreview();
+    e.target.value = ''; // reset so the same file(s) can be picked again later
   });
 
   $('qrText').addEventListener('input', (e)=>{
     const val = e.target.value.trim();
-    if (val){
-      pendingQr = { type:'text', data: val };
-      showPreview();
-    } else {
-      pendingQr = null;
-      $('previewWrap').style.display = 'none';
-    }
+    pendingItems = val ? [{ type:'text', data: val }] : [];
+    showPreview();
     updateSaveState();
   });
 
+  // Renders every pending item as its own tile in a wrapping grid, each one
+  // sized to fit its image without stretching or cropping — this is what
+  // lets any uploaded photo, at any resolution, "just display properly."
+  // A still-loading image (see loadImageIntoSlot) shows as a placeholder
+  // tile until it's ready. Every tile has its own remove (×) button so a
+  // batch of several images can be trimmed before saving.
   function showPreview(){
     const wrap = $('previewWrap');
     wrap.innerHTML = '';
+    if (!pendingItems.length){ wrap.style.display = 'none'; return; }
     wrap.style.display = 'flex';
-    if (pendingQr.type === 'image'){
-      const img = document.createElement('img');
-      img.src = pendingQr.data;
-      wrap.appendChild(img);
-    } else {
-      const div = document.createElement('div');
-      wrap.appendChild(div);
-      new QRCode(div, { text: pendingQr.data, width: 124, height: 124, correctLevel: QRCode.CorrectLevel.M });
-    }
+    pendingItems.forEach((item, idx)=>{
+      const tile = document.createElement('div');
+      tile.className = 'preview-tile' + (item ? '' : ' is-loading');
+      if (item){
+        if (item.type === 'image'){
+          const img = document.createElement('img');
+          img.src = item.data;
+          tile.appendChild(img);
+        } else {
+          const div = document.createElement('div');
+          tile.appendChild(div);
+          new QRCode(div, { text: item.data, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.M });
+        }
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'preview-remove';
+        rm.setAttribute('aria-label', 'Remove');
+        rm.textContent = '\u00d7';
+        rm.addEventListener('click', (ev)=>{
+          ev.stopPropagation();
+          pendingItems.splice(idx, 1);
+          showPreview();
+          updateSaveState();
+        });
+        tile.appendChild(rm);
+      }
+      wrap.appendChild(tile);
+    });
   }
 
   function currentName(){
@@ -1326,27 +1379,36 @@
   }
 
   function updateSaveState(){
-    const ok = currentName() && pendingQr;
+    const ready = pendingItems.filter(Boolean);
+    const ok = currentName() && ready.length > 0;
     $('saveBtn').disabled = !ok;
+    $('saveBtn').textContent = ready.length > 1 ? `Save ${ready.length} cards` : 'Save card';
   }
 
   $('saveBtn').addEventListener('click', async ()=>{
     if ($('saveBtn').disabled) return;
-    const card = {
+    const ready = pendingItems.filter(Boolean);
+    if (!ready.length) return;
+    const baseName = currentName();
+    // One image = one card, unchanged. Several images selected at once each
+    // become their own separate card (so they can be viewed individually),
+    // numbered off the same bank/wallet name since there's a single name
+    // field for the whole batch.
+    const newCards = ready.map((item, i) => ({
       id: uid(),
-      name: currentName(),
+      name: ready.length > 1 ? `${baseName} ${i + 1}` : baseName,
       from: selectedColor.from,
       to: selectedColor.to,
-      qrType: pendingQr.type,
-      qrData: pendingQr.data
-    };
-    cards.unshift(card);
+      qrType: item.type,
+      qrData: item.data
+    }));
+    cards = [...newCards, ...cards];
     $('saveBtn').disabled = true;
     try{
       await persist();
       closeAdd();
       render();
-      toast('Card saved');
+      toast(newCards.length > 1 ? `${newCards.length} cards saved` : 'Card saved');
     } finally {
       $('saveBtn').disabled = false;
     }
