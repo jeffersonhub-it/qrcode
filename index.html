@@ -935,14 +935,14 @@
   // budget, saving card #11 can never fail because of cards #1-10 — the
   // only way this can fail now is if a single photo, by itself, is bigger
   // than that one record's own ceiling (extremely unlikely for a QR photo).
-  async function persistNewCards(uname, newCards){
+  async function persistNewCards(uname, newCards, order){
     if (!sessionKey || !authRecord) return;
     try{
       for (const c of newCards){
         const enc = await encryptJSON(sessionKey, c);
         await saveCardRaw(uname, c.id, enc);
       }
-      await saveUserRecord(authRecord.username, { cardOrder: currentOrder() });
+      await saveUserRecord(authRecord.username, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Masyadong malaki ang larawang ito para masave nang mag-isa. Subukan ng ibang litrato.");
@@ -952,21 +952,21 @@
   // Reordering (tapping a card to bring it to the front) never touches any
   // card's image data — it only rewrites the small id-order list, so it's
   // fast and can't run into any size limit.
-  async function persistOrderOnly(){
+  async function persistOrderOnly(order){
     if (!sessionKey || !authRecord) return;
     try{
-      await saveUserRecord(authRecord.username, { cardOrder: currentOrder() });
+      await saveUserRecord(authRecord.username, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Suriin ang koneksyon sa internet at subukan ulit.");
     }
   }
 
-  async function persistRemoveCard(uname, id){
+  async function persistRemoveCard(uname, id, order){
     if (!sessionKey || !authRecord) return;
     try{
       await deleteCardRaw(uname, id);
-      await saveUserRecord(authRecord.username, { cardOrder: currentOrder() });
+      await saveUserRecord(authRecord.username, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Suriin ang koneksyon sa internet at subukan ulit.");
@@ -1039,12 +1039,13 @@
   // writes each card out to its own record, records the order, then clears
   // the old blob. Runs quietly in the background after login.
   async function migrateOldCombinedFormat(uname){
+    const order = currentOrder();
     try{
       for (const c of cards){
         const enc = await encryptJSON(sessionKey, c);
         await saveCardRaw(uname, c.id, enc);
       }
-      await saveUserRecord(authRecord.username, { cardOrder: currentOrder(), cardsEnc: null });
+      await saveUserRecord(authRecord.username, { cardOrder: order, cardsEnc: null });
     }catch(e){
       console.error('migration to per-card storage failed (will retry next login):', e);
     }
@@ -1316,7 +1317,7 @@
     const [picked] = cards.splice(idx, 1);
     cards.unshift(picked);
     render();
-    queuePersist(persistOrderOnly);
+    queuePersist(() => persistOrderOnly(currentOrder()));
     setTimeout(() => openQr(id), 260);
   }
 
@@ -1387,7 +1388,8 @@
   async function removeCard(id){
     const uname = authRecord.username.toLowerCase();
     cards = cards.filter(c=>c.id!==id);
-    await queuePersist(() => persistRemoveCard(uname, id));
+    const order = currentOrder();
+    await queuePersist(() => persistRemoveCard(uname, id, order));
     $('qrOverlay').classList.remove('open');
     render();
     toast('Card removed');
@@ -1621,10 +1623,11 @@
       qrData: item.data
     }));
     cards = [...newCards, ...cards];
+    const order = currentOrder();
     $('saveBtn').disabled = true;
     try{
       const uname = authRecord.username.toLowerCase();
-      await queuePersist(() => persistNewCards(uname, newCards));
+      await queuePersist(() => persistNewCards(uname, newCards, order));
       closeAdd();
       render();
       toast(newCards.length > 1 ? `${newCards.length} cards saved` : 'Card saved');
