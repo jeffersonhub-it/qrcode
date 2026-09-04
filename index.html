@@ -664,6 +664,19 @@
   let currentInitial = '•';
   let currentProfilePic = null; // data URL, or null to show the initial instead
 
+  // ---------- realtime sync (Firestore only) ----------
+  // While logged in with a live Firestore connection, two listeners keep this
+  // session in sync with any other device/tab logged into the same wallet:
+  // one on the user doc (cardOrder + profilePic), one on the cards
+  // subcollection (each card's own encrypted record). Every change decrypts
+  // with the in-memory sessionKey and re-renders. Not available in the
+  // window.storage / in-memory fallback modes — there's no push mechanism
+  // there, so those stay single-device/single-tab as before.
+  let unsubUserDoc = null;
+  let unsubCards = null;
+  let cardOrderRT = null;   // latest cardOrder from the user-doc listener
+  let cardsMapRT = {};      // id -> decrypted card, from the cards listener
+
   const $ = (id) => document.getElementById(id);
   const stack = $('stack'), emptyState = $('emptyState'),
         stackWrap = $('stackWrap'), countLabel = $('countLabel');
@@ -976,6 +989,51 @@
     return loaded.filter(Boolean);
   }
 
+  function rebuildCardsFromRealtime(){
+    if (!cardOrderRT) return; // haven't heard from the user-doc listener yet
+    cards = cardOrderRT.map(id => cardsMapRT[id]).filter(Boolean);
+    render();
+  }
+
+  function attachRealtimeListeners(uname){
+    if (!firebaseReady || !sessionKey) return; // only wired up for the Firestore backend
+    detachRealtimeListeners();
+    unsubUserDoc = userDoc(uname).onSnapshot((snap) => {
+      if (!snap.exists) return;
+      const data = snap.data();
+      cardOrderRT = data.cardOrder || [];
+      if (typeof data.profilePic !== 'undefined' && data.profilePic !== currentProfilePic){
+        currentProfilePic = data.profilePic;
+        renderAvatar();
+      }
+      rebuildCardsFromRealtime();
+    }, (err) => console.error('realtime user-doc listener error:', err));
+
+    unsubCards = userDoc(uname).collection('cards').onSnapshot(async (snap) => {
+      for (const change of snap.docChanges()){
+        const id = change.doc.id;
+        if (change.type === 'removed'){
+          delete cardsMapRT[id];
+          continue;
+        }
+        try{
+          const enc = change.doc.data().enc;
+          const card = await decryptJSON(sessionKey, enc);
+          if (!card.id) card.id = id;
+          cardsMapRT[id] = card;
+        }catch(e){ /* wrong/rotated key, or a doc mid-write — skip, next change will settle it */ }
+      }
+      rebuildCardsFromRealtime();
+    }, (err) => console.error('realtime cards listener error:', err));
+  }
+
+  function detachRealtimeListeners(){
+    if (unsubUserDoc){ unsubUserDoc(); unsubUserDoc = null; }
+    if (unsubCards){ unsubCards(); unsubCards = null; }
+    cardOrderRT = null;
+    cardsMapRT = {};
+  }
+
   // One-time, best-effort migration for accounts created before cards were
   // split into individual records: takes the old single combined blob,
   // writes each card out to its own record, records the order, then clears
@@ -1066,6 +1124,7 @@
     }finally{
       $('setupBtn').disabled = false;
     }
+    attachRealtimeListeners(username.toLowerCase());
     unlockApp();
     toast('Wallet created');
   });
@@ -1090,6 +1149,7 @@
         ? await loadAllCards(uname, key, record.cardOrder)
         : (record.cardsEnc ? await decryptJSON(key, record.cardsEnc) : []);
       currentProfilePic = record.profilePic || null;
+      attachRealtimeListeners(uname);
       unlockApp();
       if (needsMigration) queuePersist(() => migrateOldCombinedFormat(uname));
     }catch(e){
@@ -1181,6 +1241,7 @@
   $('lockBtn').addEventListener('click', async () => {
     closeAccountMenu();
     try{ await persistChain; }catch(e){} // let any in-flight save finish first
+    detachRealtimeListeners();
     sessionKey = null;
     authRecord = null;
     cards = [];
