@@ -520,51 +520,7 @@
 </style>
 </head>
 <body>
-<div class="auth-screen" id="authScreen">
-  <div class="auth-card">
-    <svg class="vault-icon" viewBox="0 0 24 24" fill="none" stroke="#CBA135" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M21 12h-3M6 12H3"/></svg>
-    <p class="eyebrow">VAULT LOCK</p>
-
-    <div class="tabbar">
-      <button class="authtabbtn active" data-authtab="login" type="button">Log in</button>
-      <button class="authtabbtn" data-authtab="register" type="button">Register</button>
-    </div>
-
-    <button class="install-btn" id="installBtn" type="button">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#9C7A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>
-      Install app
-    </button>
-
-    <div id="loginFields">
-      <h1>Welcome back</h1>
-      <p class="auth-sub">Enter your username and password to unlock your wallet.</p>
-      <label for="loginUser">Username</label>
-      <input type="text" id="loginUser" autocomplete="username">
-      <label for="loginPass">Password</label>
-      <input type="password" id="loginPass" autocomplete="current-password">
-      <button class="primary-btn" id="loginBtn">Unlock</button>
-      <p class="auth-error" id="loginError" style="display:none;"></p>
-      <button class="cancel-link" id="forgotBtn" type="button">Forgot password? Delete this wallet</button>
-    </div>
-
-    <div id="setupFields" style="display:none;">
-      <h1>Register a wallet</h1>
-      <p class="auth-sub">Create a username, password, and enter the passkey so only people who have it can register a new wallet.</p>
-      <label for="setupUser">Username</label>
-      <input type="text" id="setupUser" autocomplete="username" placeholder="e.g. juandelacruz">
-      <label for="setupPass">Password</label>
-      <input type="password" id="setupPass" autocomplete="new-password" placeholder="At least 4 characters">
-      <label for="setupPass2">Confirm password</label>
-      <input type="password" id="setupPass2" autocomplete="new-password">
-      <label for="setupPasskey">Passkey</label>
-      <input type="password" id="setupPasskey" inputmode="numeric" autocomplete="off" placeholder="Ask the wallet owner for this">
-      <button class="primary-btn" id="setupBtn">Create wallet</button>
-      <p class="auth-error" id="setupError" style="display:none;"></p>
-    </div>
-  </div>
-</div>
-
-<!-- PIN gate — shown right after log in / register, blurs the wallet behind it -->
+<!-- PIN gate — the only lock on the app, shown on load and blurs the wallet behind it -->
 <div class="pin-screen" id="pinScreen">
   <div class="pin-card">
     <svg class="vault-icon" viewBox="0 0 24 24" fill="none" stroke="#CBA135" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M21 12h-3M6 12H3"/></svg>
@@ -595,7 +551,6 @@
     </div>
     <p class="pin-error" id="pinError"></p>
     <button class="cancel-link" id="pinForgotBtn" type="button">Forgot PIN?</button>
-    <button class="cancel-link" id="pinLogoutBtn" type="button">Log out instead</button>
   </div>
 </div>
 
@@ -614,7 +569,7 @@
       <button class="menu-item" id="changePinBtn" type="button">Change PIN</button>
       <button class="menu-item" id="installBtnMenu" type="button" style="display:none;">Install app</button>
       <div class="menu-divider"></div>
-      <button class="logout-btn" id="lockBtn">Log out</button>
+      <button class="logout-btn" id="lockBtn">Lock</button>
     </div>
   </header>
 
@@ -774,8 +729,8 @@
   let cards = [];
   let selectedColor = COLORS[0];
   let pendingItems = []; // [{ type: 'image'|'text', data: string }] — one entry per QR about to be saved (or null while an image is still being processed)
-  let authRecord = null;  // { username, salt } — not secret, just needed to derive the key
-  let sessionKey = null;  // CryptoKey derived from the password, held only in memory
+  let authRecord = null;  // { pinCode } for the single local wallet
+  let sessionKey = null;  // CryptoKey derived from a fixed local passphrase, held in memory
   let currentInitial = '•';
   let currentProfilePic = null; // data URL, or null to show the initial instead
 
@@ -804,16 +759,13 @@
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS 13+
     const isSafari = isIOS && /safari/i.test(navigator.userAgent) && !/crios|fxios|edgios/i.test(navigator.userAgent);
 
-    const lockBtnEl = $('installBtn');
     const menuBtnEl = $('installBtnMenu');
     let deferredPrompt = null;
 
     function showButtons(){
-      lockBtnEl.classList.add('show');
       menuBtnEl.style.display = 'block';
     }
     function hideButtons(){
-      lockBtnEl.classList.remove('show');
       menuBtnEl.style.display = 'none';
     }
 
@@ -823,7 +775,6 @@
       // the user through Share -> Add to Home Screen ourselves.
       if (isSafari) showButtons();
       const openIosSheet = () => $('iosInstallOverlay').classList.add('open');
-      lockBtnEl.addEventListener('click', openIosSheet);
       menuBtnEl.addEventListener('click', openIosSheet);
       $('iosInstallClose').addEventListener('click', () => $('iosInstallOverlay').classList.remove('open'));
       $('iosInstallOverlay').addEventListener('click', (e) => {
@@ -845,7 +796,6 @@
         hideButtons();
         if (outcome === 'accepted') toast('App installed');
       }
-      lockBtnEl.addEventListener('click', triggerInstall);
       menuBtnEl.addEventListener('click', triggerInstall);
       window.addEventListener('appinstalled', hideButtons);
     }
@@ -892,8 +842,7 @@
   }
 
   // ---------- passkey required to register a new wallet (or delete one) ----------
-  const PASSKEY = '1437';
-  const DEFAULT_PIN = '1437'; // shown-to-cashier safety gate — separate from the account password
+  const DEFAULT_PIN = '1437'; // PIN gate default
 
   // ---------- Firebase ----------
   // Reads window.FIREBASE_CONFIG from firebase-config.js. If it's not filled
@@ -1046,7 +995,7 @@
         const enc = await encryptJSON(sessionKey, c);
         await saveCardRaw(uname, c.id, enc);
       }
-      await saveUserRecord(authRecord.username, { cardOrder: order });
+      await saveUserRecord(WALLET_ID, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Masyadong malaki ang larawang ito para masave nang mag-isa. Subukan ng ibang litrato.");
@@ -1059,7 +1008,7 @@
   async function persistOrderOnly(order){
     if (!sessionKey || !authRecord) return;
     try{
-      await saveUserRecord(authRecord.username, { cardOrder: order });
+      await saveUserRecord(WALLET_ID, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Suriin ang koneksyon sa internet at subukan ulit.");
@@ -1070,7 +1019,7 @@
     if (!sessionKey || !authRecord) return;
     try{
       await deleteCardRaw(uname, id);
-      await saveUserRecord(authRecord.username, { cardOrder: order });
+      await saveUserRecord(WALLET_ID, { cardOrder: order });
       warnIfFallback();
     }catch(e){
       reportPersistFailure(e, "Suriin ang koneksyon sa internet at subukan ulit.");
@@ -1104,7 +1053,7 @@
         const enc = await encryptJSON(sessionKey, c);
         await saveCardRaw(uname, c.id, enc);
       }
-      await saveUserRecord(authRecord.username, { cardOrder: order, cardsEnc: null });
+      await saveUserRecord(WALLET_ID, { cardOrder: order, cardsEnc: null });
     }catch(e){
       console.error('migration to per-card storage failed (will retry next login):', e);
     }
@@ -1112,26 +1061,15 @@
 
   function uid(){ return 'c' + Date.now() + Math.random().toString(36).slice(2,7); }
 
-  // ---------- auth gate ----------
-  const authScreen = $('authScreen');
-  function showAuthError(id, msg){
-    const el = $(id);
-    el.textContent = msg;
-    el.style.display = 'block';
-  }
-  function hideAuthErrors(){
-    ['setupError','loginError'].forEach(id => { $(id).style.display = 'none'; });
-  }
-
-  document.querySelectorAll('.authtabbtn').forEach(btn=>{
-    btn.addEventListener('click', ()=> switchAuthTab(btn.dataset.authtab));
-  });
-  function switchAuthTab(tab){
-    document.querySelectorAll('.authtabbtn').forEach(b=> b.classList.toggle('active', b.dataset.authtab===tab));
-    $('loginFields').style.display = tab === 'login' ? 'block' : 'none';
-    $('setupFields').style.display = tab === 'register' ? 'block' : 'none';
-    hideAuthErrors();
-  }
+  // ---------- single local wallet (no login/password) ----------
+  // There's only ever one wallet on this device/browser profile, stored
+  // under a fixed id. The only thing gating access now is the PIN screen
+  // below. Cards are still encrypted at rest with a fixed local key (not
+  // secret — this isn't meant to protect against someone reading the raw
+  // storage, just to keep the on-disk format consistent with before).
+  const WALLET_ID = 'wallet';
+  const FIXED_PASSPHRASE = 'qr-wallet-local-v1';
+  const FIXED_SALT_B64 = 'UUItV2FsbGV0LUxvY2FsLVNhbHQh'; // constant, not secret
 
   function renderAvatar(){
     const el = $('avatarInitial');
@@ -1141,21 +1079,17 @@
   }
 
   function unlockApp(){
-    authScreen.style.display = 'none';
-    const name = (authRecord && authRecord.username) ? authRecord.username : '';
-    $('accountName').textContent = name;
-    currentInitial = name ? name.trim().charAt(0).toUpperCase() : '•';
+    $('accountName').textContent = 'My QR Wallet';
+    currentInitial = 'Q';
     renderAvatar();
     render();
     showPinGate();
   }
 
   // ---------- PIN gate ----------
-  // A second, lighter lock shown every time the wallet is unlocked with the
-  // account password: the cards stay blurred (and untappable) behind it
-  // until the 4-digit PIN is entered, so a glance at an unattended phone
-  // can't reveal the QR codes. Defaults to 1437; changeable from the
-  // account menu, stored per-user alongside the rest of the record.
+  // The single lock on the app: cards render behind it, blurred and
+  // untappable, until the 4-digit PIN is entered. Defaults to 1437;
+  // changeable from the account menu, stored alongside the wallet record.
   const pinScreenEl = $('pinScreen');
   const pinDotsEl = $('pinDots');
   let pinEntry = '';
@@ -1215,113 +1149,41 @@
 
   $('pinForgotBtn').addEventListener('click', async () => {
     if (!authRecord) return;
-    const pass = prompt('Enter your account password to reset your PIN back to the default (1437):');
-    if (pass === null) return;
+    const sure = confirm('Reset your PIN back to the default (1437)?');
+    if (!sure) return;
     try{
-      const record = await fetchUserRecord(authRecord.username);
-      const key = await deriveKey(pass, record.salt);
-      await decryptJSON(key, record.verifier); // throws if the password is wrong
-      await saveUserRecord(authRecord.username, { pinCode: DEFAULT_PIN });
+      await saveUserRecord(WALLET_ID, { pinCode: DEFAULT_PIN });
       authRecord.pinCode = DEFAULT_PIN;
       $('pinError').textContent = '';
       toast('PIN reset — enter 1437 to continue');
     }catch(e){
-      $('pinError').textContent = 'Incorrect password.';
+      $('pinError').textContent = "Couldn't reset the PIN — try again.";
     }
   });
 
-  $('pinLogoutBtn').addEventListener('click', () => { hidePinGate(); $('lockBtn').click(); });
-
-  $('setupBtn').addEventListener('click', async () => {
-    hideAuthErrors();
-    const username = $('setupUser').value.trim();
-    const pass = $('setupPass').value;
-    const pass2 = $('setupPass2').value;
-    const passkey = $('setupPasskey').value.trim();
-    if (!username || !pass){ showAuthError('setupError', 'Fill in a username and password.'); return; }
-    if (pass.length < 4){ showAuthError('setupError', 'Use at least 4 characters for your password.'); return; }
-    if (pass !== pass2){ showAuthError('setupError', "Passwords don't match."); return; }
-    if (passkey !== PASSKEY){ showAuthError('setupError', 'Incorrect passkey.'); return; }
-
-    $('setupBtn').disabled = true;
+  // ---------- wallet init (runs once on load, no login step) ----------
+  async function initWallet(){
     try{
-      const existing = await fetchUserRecord(username);
-      if (existing){ showAuthError('setupError', 'That username is already taken.'); return; }
-
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const saltB64 = bufToB64(salt);
-      const key = await deriveKey(pass, saltB64);
-      const verifier = await encryptJSON(key, { ok:true, u: username });
-
-      authRecord = { username, salt: saltB64, pinCode: DEFAULT_PIN };
-      sessionKey = key;
-      cards = [];
-      currentProfilePic = null;
-
-      await saveUserRecord(username, { salt: saltB64, verifier, cardOrder: [], profilePic: null, pinCode: DEFAULT_PIN });
-      warnIfFallback();
-    }catch(e){
-      console.error('setup save failed:', e);
-      showAuthError('setupError', "Couldn't create your wallet — " + (e && e.message ? e.message : 'try again.'));
-      return;
-    }finally{
-      $('setupBtn').disabled = false;
-    }
-    unlockApp();
-    toast('Wallet created');
-  });
-
-  $('loginBtn').addEventListener('click', async () => {
-    hideAuthErrors();
-    const username = $('loginUser').value.trim();
-    const pass = $('loginPass').value;
-    if (!username || !pass){ showAuthError('loginError', 'Enter your username and password.'); return; }
-
-    $('loginBtn').disabled = true;
-    try{
-      const record = await fetchUserRecord(username);
-      if (!record){ showAuthError('loginError', 'Incorrect username or password.'); return; }
-      const key = await deriveKey(pass, record.salt);
-      await decryptJSON(key, record.verifier); // throws if the password is wrong
-      const uname = username.toLowerCase();
-      authRecord = { username, salt: record.salt, pinCode: record.pinCode || DEFAULT_PIN };
-      sessionKey = key;
+      sessionKey = await deriveKey(FIXED_PASSPHRASE, FIXED_SALT_B64);
+      let record = await fetchUserRecord(WALLET_ID);
+      if (!record){
+        record = { cardOrder: [], profilePic: null, pinCode: DEFAULT_PIN };
+        await saveUserRecord(WALLET_ID, record);
+        warnIfFallback();
+      }
+      authRecord = { pinCode: record.pinCode || DEFAULT_PIN };
       const needsMigration = !record.cardOrder && !!record.cardsEnc;
       cards = record.cardOrder
-        ? await loadAllCards(uname, key, record.cardOrder)
-        : (record.cardsEnc ? await decryptJSON(key, record.cardsEnc) : []);
+        ? await loadAllCards(WALLET_ID, sessionKey, record.cardOrder)
+        : (record.cardsEnc ? await decryptJSON(sessionKey, record.cardsEnc) : []);
       currentProfilePic = record.profilePic || null;
       unlockApp();
-      if (needsMigration) queuePersist(() => migrateOldCombinedFormat(uname));
+      if (needsMigration) queuePersist(() => migrateOldCombinedFormat(WALLET_ID));
     }catch(e){
-      console.error('login failed:', e);
-      showAuthError('loginError', 'Incorrect username or password.');
-    }finally{
-      $('loginBtn').disabled = false;
+      console.error('wallet init failed:', e);
+      toast("Couldn't open your wallet — try reloading the page.");
     }
-  });
-
-  $('forgotBtn').addEventListener('click', async () => {
-    const username = ($('loginUser').value || '').trim();
-    if (!username){ showAuthError('loginError', 'Type your username above first, then tap this again.'); return; }
-    const pk = prompt('Enter the wallet passkey to confirm this reset:');
-    if (pk === null) return;
-    if (pk.trim() !== PASSKEY){ showAuthError('loginError', 'Incorrect passkey.'); return; }
-    const sure = confirm(`This permanently deletes the wallet "${username}" and everything saved in it. Continue?`);
-    if (!sure) return;
-    try{
-      const uname = username.toLowerCase();
-      const record = await fetchUserRecord(username);
-      const ids = (record && record.cardOrder) ? record.cardOrder : [];
-      await Promise.all(ids.map(id => deleteCardRaw(uname, id).catch(()=>{})));
-      await deleteUserRecord(username);
-      toast('Wallet deleted');
-      $('loginPass').value = '';
-    }catch(e){
-      console.error('delete failed:', e);
-      showAuthError('loginError', "Couldn't delete that wallet — try again.");
-    }
-  });
+  }
 
   // ---------- account dropdown ----------
   const accountToggle = $('accountToggle'), accountMenu = $('accountMenu');
@@ -1365,7 +1227,7 @@
         renderAvatar();
         persistChain = persistChain.then(async () => {
           try{
-            await saveUserRecord(authRecord.username, { profilePic: dataUrl });
+            await saveUserRecord(WALLET_ID, { profilePic: dataUrl });
             warnIfFallback();
             toast('Profile photo updated');
           }catch(err){
@@ -1382,21 +1244,7 @@
   $('lockBtn').addEventListener('click', async () => {
     closeAccountMenu();
     try{ await persistChain; }catch(e){} // let any in-flight save finish first
-    sessionKey = null;
-    authRecord = null;
-    cards = [];
-    currentProfilePic = null;
-    currentInitial = '•';
-    cardEls.forEach(el => el.remove());
-    cardEls.clear();
-    $('loginUser').value = '';
-    $('loginPass').value = '';
-    pinEntry = '';
-    pinScreenEl.classList.remove('open');
-    pinScreenEl.style.display = 'none';
-    appEl.classList.remove('pin-locked');
-    switchAuthTab('login');
-    authScreen.style.display = 'flex';
+    showPinGate(); // re-lock: cards blur again and stay loaded, no data is cleared
   });
 
   // ---------- change PIN ----------
@@ -1429,7 +1277,7 @@
 
     $('pinSaveBtn').disabled = true;
     try{
-      await saveUserRecord(authRecord.username, { pinCode: next });
+      await saveUserRecord(WALLET_ID, { pinCode: next });
       authRecord.pinCode = next;
       warnIfFallback();
       closeChangePin();
@@ -1572,7 +1420,7 @@
   $('qrClose').addEventListener('click', ()=> $('qrOverlay').classList.remove('open'));
 
   async function removeCard(id){
-    const uname = authRecord.username.toLowerCase();
+    const uname = WALLET_ID;
     cards = cards.filter(c=>c.id!==id);
     const order = currentOrder();
     await queuePersist(() => persistRemoveCard(uname, id, order));
@@ -1812,7 +1660,7 @@
     const order = currentOrder();
     $('saveBtn').disabled = true;
     try{
-      const uname = authRecord.username.toLowerCase();
+      const uname = WALLET_ID;
       await queuePersist(() => persistNewCards(uname, newCards, order));
       closeAdd();
       render();
@@ -1822,7 +1670,7 @@
     }
   });
 
-  switchAuthTab('login');
+  initWallet();
 })();
 </script>
 </body>
