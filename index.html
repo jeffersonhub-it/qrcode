@@ -898,11 +898,16 @@
   function reportPersistFailure(e, contextMsg){
     console.error('persist failed:', e);
     const msg = (e && e.message) ? e.message : 'unknown error';
+    const code = (e && e.code) ? (" [" + e.code + "]") : "";
+    // DEBUG: showing the raw error alongside the friendly message so this can
+    // be read on a phone without needing DevTools. Remove the "DEBUG:" line
+    // once the real cause is confirmed.
     alert(
       "Hindi na-save ang huling pagbabago. " +
       (/quota|exceed|size|too large|payload/i.test(msg)
         ? contextMsg
-        : "Error: " + msg + ". Suriin ang koneksyon sa internet at subukan ulit.")
+        : "Error: " + msg + ". Suriin ang koneksyon sa internet at subukan ulit.") +
+      "\n\nDEBUG: " + msg + code
     );
   }
 
