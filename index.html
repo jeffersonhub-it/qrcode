@@ -520,6 +520,16 @@
 </style>
 </head>
 <body>
+<!-- Fallback banner: only shown by the window.onerror handler if something
+     throws before the app can render, so the page is never silently blank. -->
+<div id="fatalErrorBanner" style="display:none; position:fixed; inset:0; z-index:999; background:#0F2C25; color:#E9E4D4; font-family:'Inter',sans-serif; padding:32px 24px; text-align:center;">
+  <div style="max-width:360px; margin:80px auto 0;">
+    <p style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:0.06em; color:#E4C878; margin:0 0 10px;">SOMETHING WENT WRONG</p>
+    <h1 style="font-family:'Fraunces',serif; font-weight:500; font-size:22px; margin:0 0 12px;">The app couldn't load</h1>
+    <p style="font-size:14px; line-height:1.5; color:#A9B3AC; margin:0 0 20px;">Open your browser's console (F12 → Console) to see the exact error, or just try reloading.</p>
+    <button onclick="location.reload()" style="background:#CBA135; color:#2A2110; border:none; border-radius:12px; padding:12px 20px; font-weight:600; font-size:14px; cursor:pointer;">Reload</button>
+  </div>
+</div>
 <!-- PIN gate — the only lock on the app, shown on load and blurs the wallet behind it -->
 <div class="pin-screen" id="pinScreen">
   <div class="pin-card">
@@ -748,6 +758,16 @@
     setTimeout(()=> t.classList.remove('show'), 1800);
   }
 
+  // Safety net: if anything throws outside a try/catch (a resource fails to
+  // load, an unexpected bug, etc.), show a visible message instead of
+  // silently leaving a blank screen with no PIN prompt and no error — that
+  // "blank page, no clue why" state is the hardest one to debug.
+  window.addEventListener('error', (e) => {
+    console.error('Uncaught error:', e.error || e.message);
+    const banner = document.getElementById('fatalErrorBanner');
+    if (banner) banner.style.display = 'block';
+  });
+
   // ---------- Install app (Add to Home Screen) ----------
   (function setupInstall(){
     const isStandalone =
@@ -847,8 +867,12 @@
   // ---------- Firebase ----------
   // Reads window.FIREBASE_CONFIG from firebase-config.js. If it's not filled
   // in (or the SDK didn't load), we fall back to Claude's window.storage
-  // (useful while previewing here before you deploy), and if that isn't
-  // around either, to an in-memory store that only lasts this tab.
+  // (only available inside a Claude.ai artifact preview). If that isn't
+  // around either — e.g. once this file is deployed on its own domain like
+  // Vercel — we fall back to the browser's own localStorage, which DOES
+  // persist across reloads/tab closes on that device, unlike an in-memory
+  // store. True in-memory (nothing persisted at all) is now the last resort,
+  // only used if localStorage itself is unavailable or blocked.
   let db = null;
   let firebaseReady = false;
   function initFirebase(){
@@ -864,7 +888,20 @@
   function userDoc(uname){ return db.collection('qr_wallet_users').doc(uname); }
 
   function hasRealStorage(){ return typeof window.storage !== 'undefined' && window.storage !== null; }
-  const memoryStore = {}; // username -> record; last-resort, session-only fallback
+  // Probes that localStorage actually exists AND is writable (some browsers,
+  // e.g. Safari private mode, expose the object but throw on use).
+  let _localStorageOk = null;
+  function hasLocalStorage(){
+    if (_localStorageOk !== null) return _localStorageOk;
+    try{
+      const k = '__qr_wallet_probe__';
+      window.localStorage.setItem(k, '1');
+      window.localStorage.removeItem(k);
+      _localStorageOk = true;
+    }catch(e){ _localStorageOk = false; }
+    return _localStorageOk;
+  }
+  const memoryStore = {}; // username -> record; absolute last-resort, session-only fallback
   let usingMemoryFallback = false;
 
   async function fetchUserRecord(username){
@@ -877,6 +914,12 @@
       try{
         const res = await window.storage.get('qr_wallet_user_' + uname, false);
         return res && res.value ? JSON.parse(res.value) : null;
+      }catch(e){ return null; }
+    }
+    if (hasLocalStorage()){
+      try{
+        const raw = window.localStorage.getItem('qr_wallet_user_' + uname);
+        return raw ? JSON.parse(raw) : null;
       }catch(e){ return null; }
     }
     usingMemoryFallback = true;
@@ -894,6 +937,12 @@
       await window.storage.set('qr_wallet_user_' + uname, JSON.stringify(merged), false);
       return;
     }
+    if (hasLocalStorage()){
+      const existing = (await fetchUserRecord(username)) || {};
+      const merged = Object.assign({}, existing, data);
+      window.localStorage.setItem('qr_wallet_user_' + uname, JSON.stringify(merged));
+      return;
+    }
     usingMemoryFallback = true;
     memoryStore[uname] = Object.assign({}, memoryStore[uname] || {}, data);
   }
@@ -904,11 +953,18 @@
       try{ await window.storage.delete('qr_wallet_user_' + uname, false); }catch(e){}
       return;
     }
+    if (hasLocalStorage()){
+      try{ window.localStorage.removeItem('qr_wallet_user_' + uname); }catch(e){}
+      return;
+    }
     delete memoryStore[uname];
   }
   function warnIfFallback(){
+    // Only warn when NOTHING persists (pure in-memory). localStorage is a
+    // real, durable fallback for a single-device app like this one, so it
+    // doesn't need a warning.
     if (usingMemoryFallback){
-      toast('Demo mode — add your Firebase keys in firebase-config.js to save this for real');
+      toast('Demo mode — walang persistent storage sa browser na ito, mawawala ang datos pag na-reload');
     }
   }
 
@@ -936,6 +992,12 @@
         return res && res.value ? JSON.parse(res.value) : null;
       }catch(e){ return null; }
     }
+    if (hasLocalStorage()){
+      try{
+        const raw = window.localStorage.getItem(`qr_wallet_card_${uname}_${id}`);
+        return raw ? JSON.parse(raw) : null;
+      }catch(e){ return null; }
+    }
     const store = memoryStore[uname];
     return (store && store.cardsMap && store.cardsMap[id]) || null;
   }
@@ -948,6 +1010,16 @@
       await window.storage.set(`qr_wallet_card_${uname}_${id}`, JSON.stringify(enc), false);
       return;
     }
+    if (hasLocalStorage()){
+      // Intentionally NOT wrapped in try/catch: if this throws (e.g.
+      // QuotaExceededError because localStorage is full/near its ~5-10MB
+      // cap), we want that error to bubble up to persistNewCards' catch
+      // block so the user gets a real "too large to save" alert — silently
+      // falling back to memory here would look like a successful save that
+      // then vanishes on reload, which is the exact bug being fixed.
+      window.localStorage.setItem(`qr_wallet_card_${uname}_${id}`, JSON.stringify(enc));
+      return;
+    }
     memoryStore[uname] = memoryStore[uname] || {};
     memoryStore[uname].cardsMap = memoryStore[uname].cardsMap || {};
     memoryStore[uname].cardsMap[id] = enc;
@@ -955,6 +1027,7 @@
   async function deleteCardRaw(uname, id){
     if (firebaseReady){ try{ await cardDocRef(uname, id).delete(); }catch(e){} return; }
     if (hasRealStorage()){ try{ await window.storage.delete(`qr_wallet_card_${uname}_${id}`, false); }catch(e){} return; }
+    if (hasLocalStorage()){ try{ window.localStorage.removeItem(`qr_wallet_card_${uname}_${id}`); }catch(e){} return; }
     if (memoryStore[uname] && memoryStore[uname].cardsMap) delete memoryStore[uname].cardsMap[id];
   }
 
@@ -1181,7 +1254,9 @@
       if (needsMigration) queuePersist(() => migrateOldCombinedFormat(WALLET_ID));
     }catch(e){
       console.error('wallet init failed:', e);
-      toast("Couldn't open your wallet — try reloading the page.");
+      const banner = document.getElementById('fatalErrorBanner');
+      if (banner) banner.style.display = 'block';
+      else toast("Couldn't open your wallet — try reloading the page.");
     }
   }
 
