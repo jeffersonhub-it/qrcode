@@ -2,6 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+  // Registered as the very first thing in <head>, before firebase-config.js
+  // or any other external script loads — so if THAT file has a typo (a
+  // missing comma/quote when someone hand-edits it, an unclosed brace, etc.)
+  // the resulting parse error gets captured here instead of silently
+  // leaving a blank page later. The IIFE further down checks this at
+  // startup and shows the actual error text if one was caught.
+  window.__qrWalletEarlyError = null;
+  window.addEventListener('error', function(e){
+    if (window.__qrWalletEarlyError) return; // keep the first one, it's usually the root cause
+    window.__qrWalletEarlyError = {
+      message: (e.error && e.error.message) || e.message || 'Unknown script error',
+      source: e.filename ? (e.filename.split('/').pop() + ':' + e.lineno) : ''
+    };
+    console.error('Early script error:', window.__qrWalletEarlyError);
+  });
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>QR Wallet</title>
 
@@ -522,12 +539,13 @@
 <body>
 <!-- Fallback banner: only shown by the window.onerror handler if something
      throws before the app can render, so the page is never silently blank. -->
-<div id="fatalErrorBanner" style="display:none; position:fixed; inset:0; z-index:999; background:#0F2C25; color:#E9E4D4; font-family:'Inter',sans-serif; padding:32px 24px; text-align:center;">
+<div id="fatalErrorBanner" style="display:none; position:fixed; inset:0; z-index:999; background:#0F2C25; color:#E9E4D4; font-family:'Inter',sans-serif; padding:32px 24px; text-align:center; overflow-y:auto;">
   <div style="max-width:360px; margin:80px auto 0;">
     <p style="font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:0.06em; color:#E4C878; margin:0 0 10px;">SOMETHING WENT WRONG</p>
     <h1 style="font-family:'Fraunces',serif; font-weight:500; font-size:22px; margin:0 0 12px;">The app couldn't load</h1>
-    <p style="font-size:14px; line-height:1.5; color:#A9B3AC; margin:0 0 20px;">Open your browser's console (F12 → Console) to see the exact error, or just try reloading.</p>
-    <button onclick="location.reload()" style="background:#CBA135; color:#2A2110; border:none; border-radius:12px; padding:12px 20px; font-weight:600; font-size:14px; cursor:pointer;">Reload</button>
+    <p style="font-size:14px; line-height:1.5; color:#A9B3AC; margin:0 0 16px;">Open your browser's console (F12 → Console) to see the exact error, or just try reloading.</p>
+    <p id="fatalErrorDetail" style="font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.5; color:#CBA135; background:rgba(255,255,255,0.06); border-radius:8px; padding:12px; text-align:left; word-break:break-word; display:none;"></p>
+    <button onclick="location.reload()" style="margin-top:16px; background:#CBA135; color:#2A2110; border:none; border-radius:12px; padding:12px 20px; font-weight:600; font-size:14px; cursor:pointer;">Reload</button>
   </div>
 </div>
 <!-- PIN gate — the only lock on the app, shown on load and blurs the wallet behind it -->
@@ -758,14 +776,32 @@
     setTimeout(()=> t.classList.remove('show'), 1800);
   }
 
+  function showFatalError(detailText){
+    const banner = document.getElementById('fatalErrorBanner');
+    if (!banner) return;
+    banner.style.display = 'block';
+    if (detailText){
+      const detailEl = document.getElementById('fatalErrorDetail');
+      if (detailEl){ detailEl.textContent = detailText; detailEl.style.display = 'block'; }
+    }
+  }
+
+  // If a script (most often a hand-edited firebase-config.js with a typo)
+  // failed to parse before this point, __qrWalletEarlyError was already
+  // captured by the head listener — surface it now with the real message
+  // instead of continuing into a broken init.
+  if (window.__qrWalletEarlyError){
+    const err = window.__qrWalletEarlyError;
+    showFatalError(err.message + (err.source ? ' (' + err.source + ')' : ''));
+  }
+
   // Safety net: if anything throws outside a try/catch (a resource fails to
   // load, an unexpected bug, etc.), show a visible message instead of
   // silently leaving a blank screen with no PIN prompt and no error — that
   // "blank page, no clue why" state is the hardest one to debug.
   window.addEventListener('error', (e) => {
     console.error('Uncaught error:', e.error || e.message);
-    const banner = document.getElementById('fatalErrorBanner');
-    if (banner) banner.style.display = 'block';
+    showFatalError((e.error && e.error.message) || e.message || '');
   });
 
   // ---------- Install app (Add to Home Screen) ----------
@@ -1254,9 +1290,7 @@
       if (needsMigration) queuePersist(() => migrateOldCombinedFormat(WALLET_ID));
     }catch(e){
       console.error('wallet init failed:', e);
-      const banner = document.getElementById('fatalErrorBanner');
-      if (banner) banner.style.display = 'block';
-      else toast("Couldn't open your wallet — try reloading the page.");
+      showFatalError(e && e.message ? e.message : String(e));
     }
   }
 
