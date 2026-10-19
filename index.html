@@ -1081,8 +1081,10 @@
   // out of order and the earlier one could clobber the newer one — the
   // "added several cards, only one was left after logging back in" bug.
   let persistChain = Promise.resolve();
+  let persistInFlight = 0;
   function queuePersist(op){
-    persistChain = persistChain.then(op, op); // run next even if the prior save failed
+    persistInFlight++;
+    persistChain = persistChain.then(op, op).finally(() => { persistInFlight--; }); // run next even if the prior save failed
     return persistChain;
   }
 
@@ -1277,11 +1279,73 @@
     }
   });
 
+  // ---------- one-time import of this browser's old local cards into Firebase ----------
+  async function importLocalToFirebase(){
+    try{
+      if (!hasLocalStorage() || localStorage.getItem('qr_wallet_imported_to_cloud')) return null;
+      const raw = localStorage.getItem('qr_wallet_user_wallet');
+      if (!raw) return null;
+      const lr = JSON.parse(raw);
+      const order = lr.cardOrder || [];
+      if (!order.length) return null;
+      for (const id of order){
+        const r = localStorage.getItem('qr_wallet_card_wallet_' + id);
+        if (r) await cardDocRef(WALLET_ID, id).set({ enc: JSON.parse(r) });
+      }
+      const rec = { cardOrder: order, profilePic: lr.profilePic || null, pinCode: lr.pinCode || DEFAULT_PIN };
+      await saveUserRecord(WALLET_ID, rec);
+      localStorage.setItem('qr_wallet_imported_to_cloud', '1');
+      return rec;
+    }catch(e){ console.error('local->cloud import failed:', e); return null; }
+  }
+
+  // ---------- realtime sync across devices ----------
+  let unsubscribeSync = null;
+  async function handleRemoteSnapshot(snap){
+    if (!snap.exists || snap.metadata.hasPendingWrites) return;
+    // A save from THIS device is still running: wait, then re-check, so a
+    // stale remote order can't wipe a card that is mid-save.
+    if (persistInFlight > 0){ setTimeout(() => handleRemoteSnapshot(snap), 800); return; }
+    const rec = snap.data();
+    const order = rec.cardOrder || [];
+    if (rec.pinCode && authRecord) authRecord.pinCode = rec.pinCode;
+    if ((rec.profilePic || null) !== currentProfilePic){
+      currentProfilePic = rec.profilePic || null;
+      renderAvatar();
+    }
+    const same = order.length === cards.length && order.every((id, i) => cards[i] && cards[i].id === id);
+    if (same) return;
+    const byId = new Map(cards.map(c => [c.id, c]));
+    const next = [];
+    for (const id of order){
+      let c = byId.get(id);
+      if (!c){
+        try{
+          const enc = await fetchCardRaw(WALLET_ID, id);
+          if (enc){ c = await decryptJSON(sessionKey, enc); if (!c.id) c.id = id; }
+        }catch(e){ console.error('sync: card load failed', id, e); }
+      }
+      if (c) next.push(c);
+    }
+    if (persistInFlight > 0) return; // a local change started meanwhile; its own snapshot will follow
+    cards = next;
+    render();
+    toast('Na-update mula sa ibang device');
+  }
+  function startRealtimeSync(){
+    if (!firebaseReady || unsubscribeSync) return;
+    unsubscribeSync = userDoc(WALLET_ID).onSnapshot(handleRemoteSnapshot, err => console.error('realtime sync error:', err));
+  }
+
   // ---------- wallet init (runs once on load, no login step) ----------
   async function initWallet(){
     try{
       sessionKey = await deriveKey(FIXED_PASSPHRASE, FIXED_SALT_B64);
       let record = await fetchUserRecord(WALLET_ID);
+      if (firebaseReady && (!record || !(record.cardOrder || []).length)){
+        const imported = await importLocalToFirebase();
+        if (imported) record = Object.assign({}, record || {}, imported);
+      }
       if (!record){
         record = { cardOrder: [], profilePic: null, pinCode: DEFAULT_PIN };
         await saveUserRecord(WALLET_ID, record);
@@ -1294,6 +1358,7 @@
         : (record.cardsEnc ? await decryptJSON(sessionKey, record.cardsEnc) : []);
       currentProfilePic = record.profilePic || null;
       unlockApp();
+      startRealtimeSync();
       if (needsMigration) queuePersist(() => migrateOldCombinedFormat(WALLET_ID));
     }catch(e){
       console.error('wallet init failed:', e);
