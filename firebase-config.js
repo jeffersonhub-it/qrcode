@@ -1,15 +1,11 @@
-// Palitan yung mga placeholder sa ibaba ng totoong values mula sa
-// Firebase Console → Project Settings (gear icon) → General tab →
-// "Your apps" → yung Web app mo (</>) → SDK setup and configuration.
-//
-// I-upload/commit itong file na ito sa parehong lugar/repo kung nasaan
-// yung qr.html sa Vercel project mo — parehong file, parehong folder.
+// Firebase config para sa qrcode project.
+// I-commit itong file na ito sa parehong repo/folder ng index.html sa Vercel.
 
 window.FIREBASE_CONFIG = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "qrcode-xxxxx.firebaseapp.com",
-  projectId: "qrcode-xxxxx",
-  storageBucket: "qrcode-xxxxx.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:xxxxxxxxxxxxxxxxxxxxxx"
+  apiKey: "AIzaSyB4hCSNtYwL7KTTPw22ArMfH-2oJ5ES_L8",
+  authDomain: "qrcode-bc96c.firebaseapp.com",
+  projectId: "qrcode-bc96c",
+  storageBucket: "qrcode-bc96c.firebasestorage.app",
+  messagingSenderId: "444041981594",
+  appId: "1:444041981594:web:b866a947041af3ed2cf923"
 };
