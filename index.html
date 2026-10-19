@@ -915,7 +915,9 @@
   let firebaseReady = false;
   function initFirebase(){
     try{
-      if (window.FIREBASE_CONFIG && window.firebase && window.firebase.initializeApp){
+      const cfg = window.FIREBASE_CONFIG;
+      const cfgIsPlaceholder = !cfg || !cfg.apiKey || /PASTE_YOUR|xxxxx/i.test(cfg.apiKey + (cfg.projectId || ''));
+      if (!cfgIsPlaceholder && window.firebase && window.firebase.initializeApp){
         firebase.initializeApp(window.FIREBASE_CONFIG);
         db = firebase.firestore();
         firebaseReady = true;
@@ -945,7 +947,10 @@
   async function fetchUserRecord(username){
     const uname = username.toLowerCase();
     if (firebaseReady){
-      const snap = await userDoc(uname).get();
+      const snap = await Promise.race([
+        userDoc(uname).get(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase timed out. Check firebase-config.js and Firestore rules.')), 12000))
+      ]);
       return snap.exists ? snap.data() : null;
     }
     if (hasRealStorage()){
